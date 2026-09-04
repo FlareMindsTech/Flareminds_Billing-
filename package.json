@@ -1,0 +1,29 @@
+{
+  "name": "billing-app-server",
+  "version": "1.0.0",
+  "description": "Billing/Invoice backend for FlareMinds (Digital Marketing + Development)",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "express-async-errors": "^3.1.1",
+    "mongoose": "^8.5.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "puppeteer": "^22.13.1",
+    "nodemailer": "^6.9.14",
+    "axios": "^1.7.2",
+    "form-data": "^4.0.0",
+    "uuid": "^9.0.1",
+    "bcryptjs": "^2.4.3",
+    "jsonwebtoken": "^9.0.2",
+    "morgan": "^1.10.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.4"
+  }
+}
