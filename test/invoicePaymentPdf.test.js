@@ -76,6 +76,17 @@ test("classic invoice PDF shows paid and balance due", () => {
   assert.match(html, /750\.00/);
 });
 
+test("invoice PDFs print a human-readable partially paid status", () => {
+  for (const preset of ["classic", "premium-invoice"]) {
+    const html = renderDynamic({
+      ...baseTemplate,
+      layout: { ...baseTemplate.layout, preset },
+    });
+    assert.match(html, /Partially Paid/, preset);
+    assert.doesNotMatch(html, /partially_paid/, preset);
+  }
+});
+
 test("tax and corporate invoice PDFs show paid and balance due", () => {
   for (const preset of ["tax-invoice", "premium-invoice"]) {
     const html = renderDynamic({

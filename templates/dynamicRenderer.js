@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import { invoicePaymentState } from "../utils/invoicePayments.js";
+import { invoicePaymentState, invoiceStatusLabel } from "../utils/invoicePayments.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -385,13 +385,13 @@ function renderMeta({ doc, docType, labels }) {
           ["Quotation No.", doc.quotationNumber],
           ["Issue Date", formatDate(doc.issueDate)],
           ["Valid Until", formatDate(doc.validUntil)],
-          ["Status", doc.status],
+          ["Status", invoiceStatusLabel(doc.status)],
         ]
       : [
           ["Invoice No.", doc.invoiceNumber],
           ["Invoice Date", formatDate(doc.date)],
           ["Due Date", formatDate(doc.dueDate)],
-          ["Status", doc.status],
+          ["Status", invoiceStatusLabel(doc.status)],
         ];
 
   return `
@@ -1685,7 +1685,7 @@ function renderCorporateInvoiceDocument({
           <div><span>Date</span><strong>${formatDate(docDate)}</strong></div>
           ${isInvoice && doc.dueDate ? `<div><span>Due Date</span><strong>${formatDate(doc.dueDate)}</strong></div>` : ""}
           ${!isInvoice && doc.validUntil ? `<div><span>Valid Until</span><strong>${formatDate(doc.validUntil)}</strong></div>` : ""}
-          <div><span>Status</span><strong>${escapeHtml(String(doc.status || "Draft").toUpperCase())}</strong></div>
+          <div><span>Status</span><strong>${escapeHtml(invoiceStatusLabel(doc.status))}</strong></div>
           ${subject ? `<div class="corp-subject"><span>Subject</span><strong>${escapeHtml(subject)}</strong></div>` : ""}
         </div>
       </div>
@@ -1916,6 +1916,7 @@ export function renderDynamicDocumentHTML({ docType, doc, client, company, templ
     const paymentState = invoicePaymentState(safeDoc);
     safeDoc.amountPaid = paymentState.amountPaid;
     safeDoc.balanceDue = paymentState.balanceDue;
+    safeDoc.status = paymentState.status;
   }
   const items = Array.isArray(safeDoc.lineItems) ? safeDoc.lineItems : [];
   const snapshot = safeDoc.clientSnapshot || {};
