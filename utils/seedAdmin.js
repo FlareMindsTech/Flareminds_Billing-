@@ -12,10 +12,40 @@ export async function seedAdminFromEnv() {
     return;
   }
 
+  const syncPassword = process.env.ADMIN_SYNC_PASSWORD === "true";
   const existing = await Admin.findOne({ email: email.toLowerCase() });
-  if (existing) return; // already seeded - edit the DB directly (or drop the doc) to rotate the password
+
+  if (existing) {
+    // The env-configured account is always the platform superadmin.
+    let changed = false;
+    if (existing.role !== "superadmin") {
+      existing.role = "superadmin";
+      existing.companyId = null;
+      changed = true;
+    }
+
+    // Only rewrite the password when explicitly opted in, so a normal restart
+    // never resets credentials that were changed after seeding.
+    if (syncPassword) {
+      existing.passwordHash = await Admin.hashPassword(password);
+      changed = true;
+      console.log(`Updated password for admin ${email}`);
+    }
+
+    if (changed) {
+      await existing.save();
+      console.log(`Ensured superadmin role for ${email}`);
+    }
+    return;
+  }
 
   const passwordHash = await Admin.hashPassword(password);
-  await Admin.create({ email: email.toLowerCase(), passwordHash, name: "Admin" });
-  console.log(`Seeded admin account for ${email}`);
+  await Admin.create({
+    email: email.toLowerCase(),
+    passwordHash,
+    name: "Super Admin",
+    role: "superadmin",
+    companyId: null,
+  });
+  console.log(`Seeded superadmin account for ${email}`);
 }

@@ -6,6 +6,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const IMAGES_DIR = path.join(__dirname, "..", "images");
+const FONTS_DIR = path.join(__dirname, "..", "fonts");
 const DEFAULT_LOGO_ICON_PATH = path.join(IMAGES_DIR, "fm logo.png");
 const DEFAULT_LOGO_TEXT_PATH = path.join(IMAGES_DIR, "fm flareminds.png");
 
@@ -29,6 +30,31 @@ const resolveLogoSrc = (value) => {
   }
   return toDataUri(value);
 };
+
+const fontToBase64 = (filename) => {
+  try {
+    const filePath = path.join(FONTS_DIR, filename);
+
+    if (!fs.existsSync(filePath)) {
+      console.warn(
+        `[invoiceTemplate] Font file missing at path: ${filePath}`
+      );
+      return "";
+    }
+
+    const buffer = fs.readFileSync(filePath);
+    return buffer.toString("base64");
+  } catch (err) {
+    console.warn(
+      `[invoiceTemplate] Error reading font ${filename}:`,
+      err
+    );
+    return "";
+  }
+};
+
+const robotoRegular = fontToBase64("Roboto-Regular.ttf");
+const robotoBold = fontToBase64("Roboto-Bold.ttf");
 
 const escapeHtml = (value = "") =>
   String(value)
@@ -57,86 +83,309 @@ const icons = {
   user: `<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>`,
   shield: `<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>`,
   pin: `<path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>`,
-  wallet: `<rect x="2" y="4" width="20" height="16" rx="2"/><path d="M16 12h.01"/>`
+  wallet: `<rect x="2" y="4" width="20" height="16" rx="2"/><path d="M16 12h.01"/>`,
 };
 
 const icon = (name) =>
-  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${icons[name] || ''}</svg>`;
+  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${icons[name] || ""}</svg>`;
 
 const socialIcons = {
-  facebook: `<path d="M18 2h-3a5 5 0 0 0-5 5v3H7v4h3v8h4v-8h3l1-4h-4V7a1 1 0 0 1 1-1h3z"/>`,
-  instagram: `<rect x="2" y="2" width="20" height="20" rx="5" ry="5"/><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"/><line x1="17.5" y1="6.5" x2="17.51" y2="6.5"/>`,
-  linkedin: `<path d="M16 8a6 6 0 0 1 6 6v7h-4v-7a2 2 0 0 0-2-2 2 2 0 0 0-2 2v7h-4v-7a6 6 0 0 1 6-6z"/><rect x="2" y="9" width="4" height="12"/><circle cx="4" cy="4" r="2"/>`,
-  youtube: `<path d="M22.54 6.42a2.78 2.78 0 0 0-1.94-2C18.88 4 12 4 12 4s-6.88 0-8.6.46a2.78 2.78 0 0 0-1.94 2A29 29 0 0 0 1 11.75a29 29 0 0 0 .46 5.33A2.78 2.78 0 0 0 3.4 19c1.72.46 8.6.46 8.6.46s6.88 0 8.6-.46a2.78 2.78 0 0 0 1.94-2 29 29 0 0 0 .46-5.25 29 29 0 0 0-.46-5.33z"/><polygon points="9.75 15.02 15.5 11.75 9.75 8.48 9.75 15.02"/>`,
+  facebook: `
+    <path
+      d="M18 2h-3a5 5 0 0 0-5 5v3H7v4h3v8h4v-8h3l1-4h-4V7a1 1 0 0 1 1-1h3z"
+    />
+  `,
+
+  instagram: `
+    <rect x="2" y="2" width="20" height="20" rx="5" ry="5" />
+    <circle cx="12" cy="12" r="4" />
+    <circle cx="17.5" cy="6.5" r="0.5" fill="currentColor" stroke="none" />
+  `,
+
+  linkedin: `
+    <path d="M16 8a6 6 0 0 1 6 6v7h-4v-7a2 2 0 0 0-2-2 2 2 0 0 0-2 2v7h-4v-7a6 6 0 0 1 6-6z" />
+    <rect x="2" y="9" width="4" height="12" />
+    <circle cx="4" cy="4" r="2" />
+  `,
+
+  youtube: `
+    <rect x="2" y="5" width="20" height="14" rx="4" ry="4" />
+    <polygon points="10,9 16,12 10,15" fill="none" />
+  `,
 };
 
 const socialIcon = (name) =>
-  `<svg viewBox="0 0 24 24" fill="currentColor" stroke="none">${socialIcons[name]}</svg>`;
+  `<svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="1.8"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  >
+    ${socialIcons[name] || ""}
+  </svg>`;
 
-export function renderInvoiceHTML({ invoice, client, company = {} }) {
+export function renderInvoiceHTML({ invoice, client = {}, company = {}, bank: bankParam = {} }) {
   const items = invoice.items || invoice.lineItems || [];
 
   const subtotal =
     invoice.subtotal ??
+    invoice.subTotal ??
     items.reduce((sum, item) => {
       const qty = Number(item.quantity || 1);
-      const unitPrice = Number(item.unitPrice ?? item.price ?? 0);
-      return sum + Number(item.amount ?? item.total ?? unitPrice * qty);
+      const unitPrice = Number(
+        item.unitPrice ??
+          item.price ??
+          item.rate ??
+          0
+      );
+
+      return (
+        sum +
+        Number(
+          item.amount ??
+            item.total ??
+            unitPrice * qty
+        )
+      );
     }, 0);
 
-  const tax = Number(invoice.tax ?? invoice.taxAmount ?? 0);
+  const tax = Number(
+    invoice.tax ??
+      invoice.taxAmount ??
+      0
+  );
 
   const taxRate =
-    invoice.taxRate ?? (subtotal > 0 ? Math.round((tax / subtotal) * 100) : 0);
+    invoice.taxRate ??
+    invoice.taxPercent ??
+    (subtotal > 0
+      ? Math.round((tax / subtotal) * 100)
+      : 0);
 
-  const total = Number(invoice.total ?? invoice.grandTotal ?? subtotal + tax);
+  const total = Number(
+    invoice.total ??
+      invoice.grandTotal ??
+      subtotal + tax
+  );
 
   const bank = {
-    accountNumber: process.env.BANK_ACC_NO || "",
-    accountName: process.env.BANK_NAME || "",
-    ifsc: process.env.BANK_IFSC || "",
-    branch: process.env.BANK_BRANCH || "",
-    upi: process.env.BANK_UPI || "",
+    accountNumber:
+      bankParam?.accountNumber ||
+      bankParam?.accNo ||
+      company.bank?.accountNumber ||
+      company.bank?.accNo ||
+      process.env.BANK_ACC_NO ||
+      "",
+    accountName:
+      bankParam?.accountName ||
+      bankParam?.name ||
+      company.bank?.accountName ||
+      company.bank?.name ||
+      process.env.BANK_NAME ||
+      "",
+    ifsc:
+      bankParam?.ifsc ||
+      company.bank?.ifsc ||
+      process.env.BANK_IFSC ||
+      "",
+    branch:
+      bankParam?.branch ||
+      company.bank?.branch ||
+      process.env.BANK_BRANCH ||
+      "",
+    upi:
+      bankParam?.upi ||
+      company.bank?.upi ||
+      process.env.BANK_UPI ||
+      "",
   };
 
+  const customLabels = company.customLabels || {};
+  const invoiceTitle = customLabels.invoiceTitle || "INVOICE";
+  const clientSectionTitle = customLabels.clientSectionTitle || "BILL TO";
+
+  const docDefMap = new Map();
+  for (const def of company.customFields || []) {
+    if (def.key) docDefMap.set(def.key, def.label || def.key);
+  }
+
+  const itemDefMap = new Map();
+  for (const def of company.itemCustomFields || []) {
+    if (def.key) itemDefMap.set(def.key, def.label || def.key);
+  }
+
+  const customFieldRows = Object.entries(invoice.customFields || {})
+    .filter(([_, v]) => v !== undefined && v !== null && v !== "")
+    .map(([k, v]) => `
+      <tr>
+        <td class="label">${escapeHtml(docDefMap.get(k) || k)}</td>
+        <td class="colon">:</td>
+        <td class="val">${escapeHtml(String(v))}</td>
+      </tr>
+    `)
+    .join("");
+
+  /*
+   * =====================================================
+   * CLIENT DATA
+   *
+   * Only data mapping changed here.
+   * Existing PDF design remains unchanged.
+   * =====================================================
+   */
+
+  const clientName =
+    client.name ||
+    client.company ||
+    client.companyName ||
+    "-";
+
+  const clientPhone =
+    client.phone ||
+    client.phoneNumber ||
+    client.mobile ||
+    client.mobileNumber ||
+    client.whatsapp ||
+    "";
+
+  const clientEmail =
+    client.email ||
+    client.emailAddress ||
+    "";
+
+  /*
+   * Supports:
+   * address
+   * addressLine1
+   * addressLine2
+   * street
+   * city
+   * state
+   * pincode
+   * postalCode
+   * zipCode
+   */
+  const clientAddress =
+    client.address ||
+    client.addressLine ||
+    client.addressLine1 ||
+    client.street ||
+    [
+      client.addressLine1,
+      client.addressLine2,
+      client.street,
+      client.city,
+      client.state,
+      client.pincode ||
+        client.postalCode ||
+        client.zipCode,
+    ]
+      .filter(Boolean)
+      .join(", ") ||
+    "";
+
+  /*
+   * GST supports all common names.
+   */
+ const gstin =
+  client.gstn ||
+  "-";
+
   const logoIconSrc = resolveLogoSrc(
-    company.logoIconUrl || company.logoIconPath || DEFAULT_LOGO_ICON_PATH
+    company.logoIconUrl ||
+      company.logoIconPath ||
+      DEFAULT_LOGO_ICON_PATH
   );
 
   const logoTextSrc = resolveLogoSrc(
-    company.logoTextUrl || company.logoTextPath || DEFAULT_LOGO_TEXT_PATH
+    company.logoTextUrl ||
+      company.logoTextPath ||
+      DEFAULT_LOGO_TEXT_PATH
   );
-
-  const gstin =
-    invoice.gstNumber || invoice.gstin || company.gstin || client.gstin || "-";
 
   const rows = items.length
     ? items
         .map((item, index) => {
-          const quantity = Number(item.quantity) || 1;
-          const unitPrice = Number(item.unitPrice ?? item.price ?? 0);
-          const amount = Number(item.amount ?? item.total ?? unitPrice * quantity);
-          const name = item.name || item.productName || item.description || "Item";
-          const showSubDescription = item.description && item.name;
+          const quantity =
+            Number(item.quantity) || 1;
+
+          const unitPrice = Number(
+            item.unitPrice ??
+              item.price ??
+              item.rate ??
+              0
+          );
+
+          const amount = Number(
+            item.amount ??
+              item.total ??
+              unitPrice * quantity
+          );
+
+          const name =
+            item.name ||
+            item.productName ||
+            item.description ||
+            "Item";
+
+          const showSubDescription =
+            item.description &&
+            item.name;
+
+          const itemCustomEntries = Object.entries(item.customFields || {}).filter(
+            ([_, v]) => v !== undefined && v !== null && v !== ""
+          );
+          const itemCustomPills = itemCustomEntries.length
+            ? `<div style="margin-top:1.5mm; display:flex; flex-wrap:wrap; gap:1.5mm;">
+                ${itemCustomEntries
+                  .map(
+                    ([k, v]) =>
+                      `<span style="display:inline-block; font-size:7px; color:#475569; background:#f1f5f9; padding:0.5mm 1.5mm; border-radius:1mm; border:1px solid #e2e8f0;"><strong style="color:#0f766e;">${escapeHtml(
+                        itemDefMap.get(k) || k
+                      )}:</strong> ${escapeHtml(String(v))}</span>`
+                  )
+                  .join("")}
+              </div>`
+            : "";
 
           return `
             <tr>
               <td class="col-num">${String(index + 1).padStart(2, "0")}</td>
+
               <td class="col-desc">
                 <p class="item-name">${escapeHtml(name)}</p>
+
                 ${
                   showSubDescription
-                    ? `<p class="item-sub">${escapeHtml(item.description)}</p>`
+                    ? `<p class="item-sub">${escapeHtml(
+                        item.description
+                      )}</p>`
                     : ""
                 }
+                ${itemCustomPills}
               </td>
+
               <td class="col-qty">${quantity}</td>
-              <td class="col-rate">${Number(unitPrice).toLocaleString("en-IN", {
-                minimumFractionDigits: 2,
-              })}</td>
-              <td class="col-amount">${Number(amount).toLocaleString("en-IN", {
-                minimumFractionDigits: 2,
-              })}</td>
+
+              <td class="col-rate">
+                ${Number(unitPrice).toLocaleString(
+                  "en-IN",
+                  {
+                    minimumFractionDigits: 2,
+                  }
+                )}
+              </td>
+
+              <td class="col-amount">
+                ${Number(amount).toLocaleString(
+                  "en-IN",
+                  {
+                    minimumFractionDigits: 2,
+                  }
+                )}
+              </td>
             </tr>
           `;
         })
@@ -144,7 +393,9 @@ export function renderInvoiceHTML({ invoice, client, company = {} }) {
     : `<tr><td colspan="5" class="empty-row">No items added</td></tr>`;
 
   const logoBlock = logoIconSrc
-    ? `<img src="${logoIconSrc}" alt="${escapeHtml(company.name || "")}" class="logo-icon" />`
+    ? `<img src="${logoIconSrc}" alt="${escapeHtml(
+        company.name || ""
+      )}" class="logo-icon" />`
     : `<div class="logo-fallback"><span>${escapeHtml(
         (company.name || "FM")
           .split(" ")
@@ -155,22 +406,71 @@ export function renderInvoiceHTML({ invoice, client, company = {} }) {
       )}</span></div>`;
 
   const brandTextBlock = logoTextSrc
-    ? `<img src="${logoTextSrc}" alt="${escapeHtml(company.name || "")}" class="logo-text" />`
-    : `<p class="company-name">${escapeHtml(company.name || "Company")}</p>`;
+    ? `<img src="${logoTextSrc}" alt="${escapeHtml(
+        company.name || ""
+      )}" class="logo-text" />`
+    : `<p class="company-name">${escapeHtml(
+        company.name || "Company"
+      )}</p>`;
+
+  /*
+   * Client contact details are added inside the
+   * existing BILL TO block.
+   */
+  const clientContactDetails = `
+    ${
+      clientPhone
+        ? `<div class="client-contact"><span>${escapeHtml(clientPhone)}</span></div>`
+        : ""
+    }
+
+    ${
+      clientEmail
+        ? `<div class="client-contact"><span>${escapeHtml(clientEmail)}</span></div>`
+        : ""
+    }
+  `;
 
   return `<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8" />
+
 <style>
 
-@page { 
-  size: A4; 
-  margin: 0; 
+${
+  robotoRegular
+    ? `@font-face {
+        font-family: 'Roboto';
+        src: url('data:font/ttf;charset=utf-8;base64,${robotoRegular}') format('truetype');
+        font-weight: 400;
+        font-style: normal;
+      }`
+    : ""
 }
-* { box-sizing: border-box; }
 
-html, body {
+${
+  robotoBold
+    ? `@font-face {
+        font-family: 'Roboto';
+        src: url('data:font/ttf;charset=utf-8;base64,${robotoBold}') format('truetype');
+        font-weight: 700;
+        font-style: normal;
+      }`
+    : ""
+}
+
+* {
+  box-sizing: border-box;
+}
+
+@page {
+  size: A4;
+  margin: 0;
+}
+
+html,
+body {
   margin: 0;
   padding: 0;
   width: 210mm;
@@ -178,9 +478,16 @@ html, body {
 }
 
 body {
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: 'Roboto',
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    Arial,
+    sans-serif !important;
+
   color: #0f172a;
   background: #ffffff;
+
   -webkit-print-color-adjust: exact;
   print-color-adjust: exact;
 }
@@ -190,6 +497,7 @@ body {
   min-height: 297mm;
   background: #ffffff;
   position: relative;
+
   display: flex;
   flex-direction: column;
   justify-content: space-between;
@@ -235,6 +543,7 @@ body {
 .header-top {
   position: relative;
   z-index: 2;
+
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
@@ -257,6 +566,7 @@ body {
 .logo-fallback {
   border: 0.7mm solid #0056b3;
   border-radius: 50%;
+
   display: flex;
   align-items: center;
   justify-content: center;
@@ -322,6 +632,7 @@ body {
 
 .meta-section {
   padding: 8mm 14mm 6mm;
+
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
@@ -360,6 +671,28 @@ body {
   margin: 0;
 }
 
+/*
+ * NEW:
+ * Client phone/email use the same existing
+ * visual language and do not alter the layout.
+ */
+.client-contact {
+  display: flex;
+  align-items: center;
+  gap: 1.5mm;
+  font-size: 8.5px;
+  color: #475569;
+  line-height: 1.5;
+  margin-top: 1.2mm;
+}
+
+.client-contact svg {
+  width: 3.2mm;
+  height: 3.2mm;
+  color: #0056b3;
+  flex-shrink: 0;
+}
+
 .invoice-details-table {
   border-collapse: collapse;
 }
@@ -391,6 +724,7 @@ body {
 
 .content-body {
   flex-grow: 1;
+
   display: flex;
   flex-direction: column;
   justify-content: space-between;
@@ -423,11 +757,29 @@ body {
   letter-spacing: 0.5px;
 }
 
-.custom-table thead th.col-num { width: 10mm; text-align: center; }
-.custom-table thead th.col-desc { text-align: left; }
-.custom-table thead th.col-qty { width: 20mm; text-align: center; }
-.custom-table thead th.col-rate { width: 32mm; text-align: right; }
-.custom-table thead th.col-amount { width: 32mm; text-align: right; }
+.custom-table thead th.col-num {
+  width: 10mm;
+  text-align: center;
+}
+
+.custom-table thead th.col-desc {
+  text-align: left;
+}
+
+.custom-table thead th.col-qty {
+  width: 20mm;
+  text-align: center;
+}
+
+.custom-table thead th.col-rate {
+  width: 32mm;
+  text-align: right;
+}
+
+.custom-table thead th.col-amount {
+  width: 32mm;
+  text-align: right;
+}
 
 .custom-table tbody td {
   padding: 4mm;
@@ -440,19 +792,52 @@ body {
   border-bottom: 1px solid #cbd5e1;
 }
 
-.col-num { text-align: center; font-weight: 800; color: #0056b3; }
-.col-desc { text-align: left; }
-.item-name { margin: 0; font-weight: 600; color: #0f172a; }
-.item-sub { margin: 1.5mm 0 0; font-size: 8px; color: #64748b; }
-.col-qty { text-align: center; }
-.col-rate { text-align: right; }
-.col-amount { text-align: right; font-weight: 600; }
-.empty-row { text-align: center; padding: 10mm 6mm; color: #94a3b8; }
+.col-num {
+  text-align: center;
+  font-weight: 800;
+  color: #0056b3;
+}
+
+.col-desc {
+  text-align: left;
+}
+
+.item-name {
+  margin: 0;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.item-sub {
+  margin: 1.5mm 0 0;
+  font-size: 8px;
+  color: #64748b;
+}
+
+.col-qty {
+  text-align: center;
+}
+
+.col-rate {
+  text-align: right;
+}
+
+.col-amount {
+  text-align: right;
+  font-weight: 600;
+}
+
+.empty-row {
+  text-align: center;
+  padding: 10mm 6mm;
+  color: #94a3b8;
+}
 
 /* ===================== TOTALS SECTION ===================== */
 
 .totals-container {
   padding: 6mm 14mm 0;
+
   display: flex;
   justify-content: flex-end;
 }
@@ -467,7 +852,9 @@ body {
 .totals-row {
   display: flex;
   justify-content: space-between;
+
   padding: 3mm 4mm;
+
   font-size: 9px;
   font-weight: 700;
   color: #0a2540;
@@ -476,7 +863,9 @@ body {
 .grand-total-row {
   background: #0056b3;
   color: #ffffff;
+
   padding: 3.5mm 4mm;
+
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -497,23 +886,30 @@ body {
 
 .bottom-section {
   padding: 8mm 14mm 10mm;
+
   display: grid;
   grid-template-columns: 1fr 1fr;
+
   gap: 12mm;
+
   position: relative;
 }
 
 .bottom-section::before {
   content: "";
+
   position: absolute;
   top: 8mm;
   bottom: 10mm;
   left: 50%;
+
   width: 0.5px;
+
   background: #e2e8f0;
 }
 
-.payment-block, .notes-block {
+.payment-block,
+.notes-block {
   display: flex;
   flex-direction: column;
 }
@@ -568,7 +964,9 @@ body {
 
 .footer {
   position: relative;
+
   padding: 5mm 14mm 5mm 30mm;
+
   background: #ffffff;
   border-top: 1px solid #f1f5f9;
 }
@@ -577,8 +975,10 @@ body {
   position: absolute;
   bottom: 0;
   left: 0;
+
   width: 35mm;
   height: 25mm;
+
   pointer-events: none;
 }
 
@@ -586,26 +986,41 @@ body {
   position: absolute;
   bottom: 0;
   left: 0;
+
   width: 35mm;
   height: 25mm;
+
   background: #60a5fa;
-  clip-path: polygon(0 40%, 0 100%, 75% 100%);
+
+  clip-path: polygon(
+    0 40%,
+    0 100%,
+    75% 100%
+  );
 }
 
 .bottom-left-ribbon .shape-dark {
   position: absolute;
   bottom: 0;
   left: 0;
+
   width: 35mm;
   height: 25mm;
+
   background: #0056b3;
-  clip-path: polygon(0 50%, 0 100%, 65% 100%);
+
+  clip-path: polygon(
+    0 50%,
+    0 100%,
+    65% 100%
+  );
 }
 
 .footer-inner {
   display: flex;
   justify-content: space-between;
   align-items: center;
+
   font-size: 8px;
   font-weight: 600;
   color: #334155;
@@ -643,190 +1058,506 @@ body {
 
 </style>
 </head>
+
 <body>
 
 <div class="invoice-page">
 
   <div>
+
     <!-- HEADER -->
+
     <div class="header">
+
       <div class="top-right-ribbon">
         <div class="shape-light"></div>
         <div class="shape-dark"></div>
       </div>
 
       <div class="header-top">
+
         <div class="brand-block">
+
           ${logoBlock}
+
           <div class="brand-text">
+
             ${brandTextBlock}
+
             ${
               company.tagline
-                ? `<p class="company-tagline">${escapeHtml(company.tagline)}</p>`
+                ? `<p class="company-tagline">${escapeHtml(
+                    company.tagline
+                  )}</p>`
                 : ""
             }
+
           </div>
+
         </div>
 
         <div class="invoice-title-block">
-          <h1>INVOICE</h1>
+
+          <h1>${escapeHtml(invoiceTitle)}</h1>
+
           <div class="underline"></div>
+
         </div>
+
       </div>
+
     </div>
+
 
     <!-- BILL TO & INVOICE DETAILS -->
+
     <div class="meta-section">
+
       <div class="bill-to-block">
-        <div class="section-label">BILL TO</div>
-        <div class="title-line"></div>
-        <div class="client-name">${escapeHtml(client.name || "Akash Rajan")}</div>
-        <div class="client-address">
-          ${escapeHtml(client.address || "123 Anywhere St.,\nAny City,\nST 12345").replace(/\n/g, '<br/>')}
+
+        <div class="section-label">
+          ${escapeHtml(clientSectionTitle)}
         </div>
+
+        <div class="title-line"></div>
+
+        <div class="client-name">
+          ${escapeHtml(clientName)}
+        </div>
+
+        <div class="client-address">
+          ${
+            escapeHtml(
+              clientAddress ||
+                "123 Anywhere St.,\nAny City,\nST 12345"
+            )
+          .replace(/\n/g, "<br/>")}
+        </div>
+
+        ${clientContactDetails}
+
       </div>
+
 
       <div class="invoice-details-block">
+
         <table class="invoice-details-table">
+
           <tr>
-            <td class="label">Invoice No.</td>
-            <td class="colon">:</td>
-            <td class="val">${escapeHtml(invoice.invoiceNumber)}</td>
+            <td class="label">
+              Invoice No.
+            </td>
+
+            <td class="colon">
+              :
+            </td>
+
+            <td class="val">
+              ${escapeHtml(
+                invoice.invoiceNumber
+              )}
+            </td>
           </tr>
+
+
           <tr>
-            <td class="label">Invoice Date</td>
-            <td class="colon">:</td>
-            <td class="val">${formatDate(invoice.date)}</td>
+            <td class="label">
+              Invoice Date
+            </td>
+
+            <td class="colon">
+              :
+            </td>
+
+            <td class="val">
+              ${formatDate(invoice.date)}
+            </td>
           </tr>
+
+
           <tr>
-            <td class="label">Due Date</td>
-            <td class="colon">:</td>
-            <td class="val">${formatDate(invoice.dueDate || invoice.date)}</td>
+            <td class="label">
+              Due Date
+            </td>
+
+            <td class="colon">
+              :
+            </td>
+
+            <td class="val">
+              ${formatDate(
+                invoice.dueDate ||
+                  invoice.date
+              )}
+            </td>
           </tr>
+
+
           <tr>
-            <td class="label">GSTIN</td>
-            <td class="colon">:</td>
-            <td class="val">${escapeHtml(gstin)}</td>
+            <td class="label">
+              GSTIN
+            </td>
+
+            <td class="colon">
+              :
+            </td>
+
+            <td class="val">
+              ${escapeHtml(gstin)}
+            </td>
           </tr>
+
+          ${customFieldRows}
+
         </table>
+
       </div>
+
     </div>
+
   </div>
+
 
   <!-- DYNAMIC CONTENT AREA -->
+
   <div class="content-body">
+
     <!-- ITEMS TABLE -->
+
     <div class="table-section">
+
       <table class="custom-table">
+
         <thead>
+
           <tr>
-            <th class="col-num">#</th>
-            <th class="col-desc">DESCRIPTION</th>
-            <th class="col-qty">QTY</th>
-            <th class="col-rate">UNIT PRICE (₹)</th>
-            <th class="col-amount">AMOUNT (₹)</th>
+
+            <th class="col-num">
+              #
+            </th>
+
+            <th class="col-desc">
+              DESCRIPTION
+            </th>
+
+            <th class="col-qty">
+              QTY
+            </th>
+
+            <th class="col-rate">
+              UNIT PRICE (₹)
+            </th>
+
+            <th class="col-amount">
+              AMOUNT (₹)
+            </th>
+
           </tr>
+
         </thead>
+
         <tbody>
+
           ${rows}
+
         </tbody>
+
       </table>
+
     </div>
+
 
     <div>
+
       <!-- TOTALS -->
+
       <div class="totals-container">
+
         <div class="totals-box">
+
           <div class="totals-row">
-            <span>SUB TOTAL</span>
-            <span>${money(subtotal)}</span>
+
+            <span>
+              SUB TOTAL
+            </span>
+
+            <span>
+              ${money(subtotal)}
+            </span>
+
           </div>
+
+
           <div class="totals-row">
-            <span>TAX (${taxRate}%)</span>
-            <span>${money(tax)}</span>
+
+            <span>
+              TAX (${taxRate}%)
+            </span>
+
+           <span>
+  ${money(tax).replace(/^₹\s*/, "")}
+</span>
+
           </div>
+
+
           <div class="grand-total-row">
-            <span class="label">GRAND TOTAL</span>
-            <span class="val">${money(total)}</span>
+
+            <span class="label">
+              GRAND TOTAL
+            </span>
+
+            <span class="val">
+              ${money(total)}
+            </span>
+
           </div>
+
         </div>
+
       </div>
+
 
       <!-- PAYMENT DETAILS & NOTES -->
+
       <div class="bottom-section">
+
         <div class="payment-block">
-          <div class="section-label">PAYMENT DETAILS</div>
+
+          <div class="section-label">
+            PAYMENT DETAILS
+          </div>
+
           <div class="title-line"></div>
+
           <table class="info-table">
+
             <tr>
-              <td class="icon-cell">${icon("bank")}</td>
-              <td class="label-cell">Acc No.</td>
-              <td class="colon-cell">:</td>
-              <td class="val-cell">${escapeHtml(bank.accountNumber || "-")}</td>
+
+              <td class="icon-cell">
+                ${icon("bank")}
+              </td>
+
+              <td class="label-cell">
+                Acc No.
+              </td>
+
+              <td class="colon-cell">
+                :
+              </td>
+
+              <td class="val-cell">
+                ${escapeHtml(
+                  bank.accountNumber || "-"
+                )}
+              </td>
+
             </tr>
+
+
             <tr>
-              <td class="icon-cell">${icon("user")}</td>
-              <td class="label-cell">Name</td>
-              <td class="colon-cell">:</td>
-              <td class="val-cell">${escapeHtml(bank.accountName || bank.name || "-")}</td>
+
+              <td class="icon-cell">
+                ${icon("user")}
+              </td>
+
+              <td class="label-cell">
+                Name
+              </td>
+
+              <td class="colon-cell">
+                :
+              </td>
+
+              <td class="val-cell">
+                ${escapeHtml(
+                  bank.accountName ||
+                    bank.name ||
+                    "-"
+                )}
+              </td>
+
             </tr>
+
+
             <tr>
-              <td class="icon-cell">${icon("shield")}</td>
-              <td class="label-cell">IFSC</td>
-              <td class="colon-cell">:</td>
-              <td class="val-cell">${escapeHtml(bank.ifsc || "-")}</td>
+
+              <td class="icon-cell">
+                ${icon("shield")}
+              </td>
+
+              <td class="label-cell">
+                IFSC
+              </td>
+
+              <td class="colon-cell">
+                :
+              </td>
+
+              <td class="val-cell">
+                ${escapeHtml(
+                  bank.ifsc || "-"
+                )}
+              </td>
+
             </tr>
+
+
             <tr>
-              <td class="icon-cell">${icon("pin")}</td>
-              <td class="label-cell">Branch</td>
-              <td class="colon-cell">:</td>
-              <td class="val-cell">${escapeHtml(bank.branch || "-")}</td>
+
+              <td class="icon-cell">
+                ${icon("pin")}
+              </td>
+
+              <td class="label-cell">
+                Branch
+              </td>
+
+              <td class="colon-cell">
+                :
+              </td>
+
+              <td class="val-cell">
+                ${escapeHtml(
+                  bank.branch || "-"
+                )}
+              </td>
+
             </tr>
+
+
             <tr>
-              <td class="icon-cell">${icon("wallet")}</td>
-              <td class="label-cell">UPI ID</td>
-              <td class="colon-cell">:</td>
-              <td class="val-cell">${escapeHtml(bank.upi || "-")}</td>
+
+              <td class="icon-cell">
+                ${icon("wallet")}
+              </td>
+
+              <td class="label-cell">
+                UPI ID
+              </td>
+
+              <td class="colon-cell">
+                :
+              </td>
+
+              <td class="val-cell">
+                ${escapeHtml(
+                  bank.upi || "-"
+                )}
+              </td>
+
             </tr>
+
           </table>
+
         </div>
+
 
         <div class="notes-block">
-          <div class="section-label">NOTES</div>
-          <div class="title-line"></div>
-          <div class="notes-content">
-            <p>${escapeHtml(invoice.notes || "Thank you!")}</p>
+
+          <div class="section-label">
+            NOTES
           </div>
 
-          <div class="section-label" style="margin-top: 3mm;">TERMS &amp; CONDITIONS</div>
           <div class="title-line"></div>
+
           <div class="notes-content">
-            <p>${escapeHtml(invoice.terms || "Payment is due within 15 days.\nPlease make checks payable to:\nFlareMinds Technology and Services").replace(/\n/g, '<br/>')}</p>
+
+            <p>
+              ${escapeHtml(
+                invoice.notes ||
+                  "Thank you!"
+              )}
+            </p>
+
           </div>
+
+
+          <div
+            class="section-label"
+            style="margin-top: 3mm;"
+          >
+            TERMS &amp; CONDITIONS
+          </div>
+
+          <div class="title-line"></div>
+
+          <div class="notes-content">
+
+            <p>
+              ${escapeHtml(
+                invoice.terms ||
+                  "Payment is due within 15 days.\nPlease make checks payable to:\nFlareMinds Technology and Services"
+              ).replace(
+                /\n/g,
+                "<br/>"
+              )}
+            </p>
+
+          </div>
+
         </div>
+
       </div>
+
     </div>
+
   </div>
 
+
   <!-- FOOTER -->
+
   <div class="footer">
+
     <div class="bottom-left-ribbon">
+
       <div class="shape-light"></div>
       <div class="shape-dark"></div>
+
     </div>
+
     <div class="footer-inner">
+
       <div class="footer-contact">
-        <div class="footer-item">${icon("globe")} ${escapeHtml(company.website || "flaremindstech.com")}</div>
-        <div class="footer-item">${icon("phone")} ${escapeHtml(company.phone || "+91 95009 50813")}</div>
-        <div class="footer-item">${icon("mail")} ${escapeHtml(company.email || "info@flaremindstech.com")}</div>
+
+        <div class="footer-item">
+          ${icon("globe")}
+          ${escapeHtml(
+            company.website ||
+              "flaremindstech.com"
+          )}
+        </div>
+
+        <div class="footer-item">
+          ${icon("phone")}
+          ${escapeHtml(
+            company.phone ||
+              "+91 95009 50813"
+          )}
+        </div>
+
+        <div class="footer-item">
+          ${icon("mail")}
+          ${escapeHtml(
+            company.email ||
+              "info@flaremindstech.com"
+          )}
+        </div>
+
       </div>
+
+
       <div class="footer-socials">
+
         ${socialIcon("facebook")}
         ${socialIcon("instagram")}
         ${socialIcon("linkedin")}
         ${socialIcon("youtube")}
+
       </div>
+
     </div>
+
   </div>
 
 </div>

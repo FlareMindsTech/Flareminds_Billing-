@@ -5,10 +5,11 @@ const API_VERSION = process.env.WHATSAPP_API_VERSION || "v20.0";
 const PHONE_NUMBER_ID = process.env.WHATSAPP_PHONE_NUMBER_ID;
 const ACCESS_TOKEN = process.env.WHATSAPP_ACCESS_TOKEN;
 
-console.log("SERVICE FILE — PHONE_NUMBER_ID:", PHONE_NUMBER_ID);
-console.log("SERVICE FILE — ACCESS_TOKEN exists:", !!ACCESS_TOKEN);
-
 const BASE_URL = `https://graph.facebook.com/${API_VERSION}/${PHONE_NUMBER_ID}`;
+const REQUEST_TIMEOUT_MS = 20000;
+
+const safeFilename = (prefix, number) =>
+  `${prefix}-${String(number || "document").replace(/[^A-Za-z0-9._-]/g, "_")}.pdf`;
 
 // Step 1: upload the PDF buffer to WhatsApp's media endpoint, get a media id back.
 async function uploadMedia(pdfBuffer, filename) {
@@ -21,27 +22,21 @@ async function uploadMedia(pdfBuffer, filename) {
       ...form.getHeaders(),
       Authorization: `Bearer ${ACCESS_TOKEN}`,
     },
+    timeout: REQUEST_TIMEOUT_MS,
+    maxRedirects: 0,
+    maxBodyLength: 10 * 1024 * 1024,
   });
   return res.data.id;
 }
 
 // Step 2: send a document message referencing that media id.
-// `to` must be in international format without "+" e.g. "919500950813"
-export async function sendInvoiceWhatsApp({ to, invoiceNumber, pdfBuffer }) {
-  console.log("🚀 sendInvoiceWhatsApp called with to:", to);
-  
+async function sendDocumentWhatsApp({ to, filename, caption, pdfBuffer }) {
   if (!PHONE_NUMBER_ID || !ACCESS_TOKEN) {
-    throw new Error("WhatsApp is not configured...");
+    throw new Error("WhatsApp is not configured (phone number id or access token missing)");
   }
 
-  const filename = `Invoice-${invoiceNumber}.pdf`;
-  console.log("📤 Uploading media:", filename);
-  
   const mediaId = await uploadMedia(pdfBuffer, filename);
-  console.log("✅ Media uploaded, ID:", mediaId);
 
-  console.log("📨 Sending message to:", to, "with mediaId:", mediaId);
-  
   await axios.post(
     `${BASE_URL}/messages`,
     {
@@ -51,24 +46,52 @@ export async function sendInvoiceWhatsApp({ to, invoiceNumber, pdfBuffer }) {
       document: {
         id: mediaId,
         filename,
-        caption: `Invoice ${invoiceNumber}`,
+        caption,
       },
     },
-    { headers: { Authorization: `Bearer ${ACCESS_TOKEN}` } }
+    {
+      headers: { Authorization: `Bearer ${ACCESS_TOKEN}` },
+      timeout: REQUEST_TIMEOUT_MS,
+      maxRedirects: 0,
+    }
   );
-  
-  console.log("✅ Message sent successfully");
+}
+
+export async function sendInvoiceWhatsApp({ to, invoiceNumber, pdfBuffer }) {
+  await sendDocumentWhatsApp({
+    to,
+    filename: safeFilename("Invoice", invoiceNumber),
+    caption: `Invoice ${invoiceNumber}`,
+    pdfBuffer,
+  });
+}
+
+export async function sendQuotationWhatsApp({ to, quotationNumber, pdfBuffer }) {
+  await sendDocumentWhatsApp({
+    to,
+    filename: safeFilename("Quotation", quotationNumber),
+    caption: `Quotation ${quotationNumber}`,
+    pdfBuffer,
+  });
 }
 
 // Fallback that needs no API setup: builds a wa.me link with a prefilled message.
-// Useful while the Cloud API isn't configured yet - admin clicks it and sends manually
-// (the PDF itself would need to be attached by hand, or hosted and linked in the message).
-export function buildWhatsAppShareLink({ to, invoiceNumber, pdfUrl }) {
+export function buildWhatsAppShareLink({ to, invoiceNumber, pdfUrl, companyName }) {
+  const compName = companyName || process.env.COMPANY_NAME || "FlareMinds";
   const text = encodeURIComponent(
-    `Hi, please find your invoice ${invoiceNumber} from ${process.env.COMPANY_NAME}.${
+    `Hi, please find your invoice ${invoiceNumber} from ${compName}.${
       pdfUrl ? ` Download: ${pdfUrl}` : ""
     }`
   );
   return `https://wa.me/${to}?text=${text}`;
 }
-  
+
+export function buildQuotationShareLink({ to, quotationNumber, pdfUrl, companyName }) {
+  const compName = companyName || process.env.COMPANY_NAME || "FlareMinds";
+  const text = encodeURIComponent(
+    `Hi, please find your quotation ${quotationNumber} from ${compName}.${
+      pdfUrl ? ` Download: ${pdfUrl}` : ""
+    }`
+  );
+  return `https://wa.me/${to}?text=${text}`;
+}
