@@ -308,6 +308,7 @@ export function defaultContent(docType, preset = "classic") {
     showBankDetails: true,
     showServicesBanner: isGst || isProposal,
     showSignature: true,
+    showPaymentSummary: true,
   };
 
   if (isProposal) {

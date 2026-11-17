@@ -169,6 +169,7 @@ const contentSchema = new mongoose.Schema(
     showBankDetails: { type: Boolean, default: true },
     showServicesBanner: { type: Boolean, default: true },
     showSignature: { type: Boolean, default: true },
+    showPaymentSummary: { type: Boolean, default: true },
   },
   { _id: false }
 );

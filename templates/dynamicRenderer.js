@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import { invoicePaymentState } from "../utils/invoicePayments.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -527,8 +528,10 @@ function renderItems({ items, docType, template, labels, currency }) {
     </section>`;
 }
 
-function renderTotals({ doc, docType, labels, currency }) {
+function renderTotals({ doc, docType, labels, currency, template }) {
   const isQuotation = docType === "quotation";
+  const showPaymentSummary =
+    docType === "invoice" && template?.content?.showPaymentSummary !== false;
   const rows = [
     [labels.subTotalLabel || "Sub Total", doc.subTotal || 0],
     ...(isQuotation && Number(doc.discountTotal || 0) > 0
@@ -562,6 +565,19 @@ function renderTotals({ doc, docType, labels, currency }) {
           <span>${escapeHtml(labels.grandTotalLabel || "Grand Total")}</span>
           <span>${money(doc.grandTotal || 0, currency)}</span>
         </div>
+        ${
+          showPaymentSummary
+            ? `
+        <div class="total-row paid">
+          <span>Paid</span>
+          <span>${money(doc.amountPaid || 0, currency)}</span>
+        </div>
+        <div class="total-row due">
+          <span>Balance Due</span>
+          <span>${money(doc.balanceDue || 0, currency)}</span>
+        </div>`
+            : ""
+        }
       </div>
     </section>`;
 }
@@ -743,6 +759,13 @@ const PRESET_CSS = {
       border: 1.5px solid #000; border-top: none; padding: 5px 10px;
       font-size: 0.82em; background: #ffffff;
     }
+    .tax-payment-summary {
+      display: flex; justify-content: flex-end; gap: 22px;
+      border: 1.5px solid #000; border-top: none; padding: 5px 10px;
+      font-size: 0.82em; background: #ffffff;
+    }
+    .tax-payment-summary span:first-child strong { color: #047857; }
+    .tax-payment-summary span:last-child strong { color: #b91c1c; }
     .gst-breakup-table {
       width: 100%; border-collapse: collapse; border: 1.5px solid #000;
       border-top: none;
@@ -903,6 +926,8 @@ const CORPORATE_CSS = `
   .corp-total-row { display: flex; justify-content: space-between; gap: 12px; padding: 7px 12px; border-bottom: 1px solid #e2e8f0; font-size: 0.84em; }
   .corp-total-row:last-child { border-bottom: 0; }
   .corp-total-row.corp-grand { background: var(--secondary); color: #fff; font-size: 1em; font-weight: 800; }
+  .corp-total-row.corp-paid { color: #047857; font-weight: 700; }
+  .corp-total-row.corp-due { color: #b91c1c; font-weight: 800; }
   .corp-words { padding: 7px 12px; font-size: 0.72em; color: #64748b; background: #f8fafc; }
   .corp-footer-grid { display: grid; grid-template-columns: 1.15fr 1fr; gap: 24px; margin-top: 18px; padding-top: 14px; border-top: 2px solid var(--accent); }
   .corp-bank > div { display: flex; justify-content: space-between; gap: 12px; font-size: 0.8em; padding: 2px 0; }
@@ -974,6 +999,7 @@ function renderTaxInvoiceDocument({ docType, doc, client, company, template, cur
   const showAmountInWords = content ? content.showAmountInWords !== false : true;
   const showBankDetails = content ? content.showBankDetails !== false : true;
   const showSignature = content ? content.showSignature !== false : true;
+  const showPaymentSummary = isInvoice && (content ? content.showPaymentSummary !== false : true);
   const servicesBanner = content
     ? String(content.servicesBanner || "").trim()
     : LEGACY_SERVICES_BANNER;
@@ -1065,6 +1091,13 @@ function renderTaxInvoiceDocument({ docType, doc, client, company, template, cur
   const wordsRow = showAmountInWords
     ? `<div class="tax-words-row">
         <strong>Amount in words:</strong> ${amountInWords(effectiveGrandTotal, currency)}
+      </div>`
+    : "";
+
+  const paymentSummaryRow = showPaymentSummary
+    ? `<div class="tax-payment-summary">
+        <span>Paid: <strong>${Number(doc.amountPaid || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></span>
+        <span>Balance Due: <strong>${Number(doc.balanceDue || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></span>
       </div>`
     : "";
 
@@ -1192,6 +1225,7 @@ function renderTaxInvoiceDocument({ docType, doc, client, company, template, cur
     </table>
 
     ${wordsRow}
+    ${paymentSummaryRow}
     ${gstBlock}
     ${bankSignGrid}
     ${showServicesBanner ? `<div class="tax-services-banner">${escapeHtml(servicesBanner)}</div>` : ""}
@@ -1566,6 +1600,8 @@ function renderCorporateInvoiceDocument({
   const subject = doc.customFields?.subject || content?.subject || doc.subject || "";
   const showBank = content ? content.showBankDetails !== false : true;
   const showSignature = content ? content.showSignature !== false : true;
+  const showPaymentSummary =
+    isInvoice && (content ? content.showPaymentSummary !== false : true);
 
   let subTotal = 0;
   let taxTotal = 0;
@@ -1684,6 +1720,12 @@ function renderCorporateInvoiceDocument({
           <div class="corp-total-row"><span>Sub Total</span><strong>${money(effectiveSub, currency)}</strong></div>
           <div class="corp-total-row"><span>Tax</span><strong>${money(effectiveTax, currency)}</strong></div>
           <div class="corp-total-row corp-grand"><span>${escapeHtml(labels.grandTotalLabel || "Grand Total")}</span><strong>${money(effectiveGrand, currency)}</strong></div>
+          ${
+            showPaymentSummary
+              ? `<div class="corp-total-row corp-paid"><span>Paid</span><strong>${money(doc.amountPaid || 0, currency)}</strong></div>
+                 <div class="corp-total-row corp-due"><span>Balance Due</span><strong>${money(doc.balanceDue || 0, currency)}</strong></div>`
+              : ""
+          }
           ${
             content?.showAmountInWords !== false
               ? `<div class="corp-words">${escapeHtml(amountInWords(effectiveGrand, currency))}</div>`
@@ -1870,6 +1912,11 @@ export function renderDynamicDocumentHTML({ docType, doc, client, company, templ
   const labels = safeTemplate.labels || {};
   const layout = safeTemplate.layout || {};
   const currency = currencyCode(safeDoc, safeCompany);
+  if (docType === "invoice") {
+    const paymentState = invoicePaymentState(safeDoc);
+    safeDoc.amountPaid = paymentState.amountPaid;
+    safeDoc.balanceDue = paymentState.balanceDue;
+  }
   const items = Array.isArray(safeDoc.lineItems) ? safeDoc.lineItems : [];
   const snapshot = safeDoc.clientSnapshot || {};
   const clientData = { ...plain(client), ...snapshot };
@@ -1881,7 +1928,7 @@ export function renderDynamicDocumentHTML({ docType, doc, client, company, templ
     meta: () => renderMeta({ doc: safeDoc, docType, labels }),
     client: () => renderClient({ client: clientData, labels }),
     items: () => renderItems({ items, docType, template: safeTemplate, labels, currency }),
-    totals: () => renderTotals({ doc: safeDoc, docType, labels, currency }),
+    totals: () => renderTotals({ doc: safeDoc, docType, labels, currency, template: safeTemplate }),
     bank: () => renderBank({ company: safeCompany }),
     notes: () => renderNotes({ doc: safeDoc, labels }),
     terms: () => renderTerms({ doc: safeDoc, docType, labels }),
@@ -2097,6 +2144,8 @@ export function renderDynamicDocumentHTML({ docType, doc, client, company, templ
     background: var(--accent); color: #fff; font-weight: 700;
     border-radius: 6px; margin-top: 6px; border-bottom: none;
   }
+  .total-row.paid { color: #047857; font-weight: 600; }
+  .total-row.due { color: #b91c1c; font-weight: 700; }
   .bank-row { display: flex; gap: 10px; font-size: 0.9em; margin-top: 3px; }
   .bank-row span { min-width: 110px; color: #64748b; }
   .condition-block { margin-bottom: 10px; }

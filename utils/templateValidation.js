@@ -139,6 +139,7 @@ function normalizeContent(input) {
     "showBankDetails",
     "showServicesBanner",
     "showSignature",
+    "showPaymentSummary",
   ]) {
     if (input[key] !== undefined) content[key] = input[key] !== false;
   }

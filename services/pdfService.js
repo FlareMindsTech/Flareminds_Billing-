@@ -165,7 +165,7 @@ export async function generateInvoicePDF(
   }
 
   const bank = customCompany?.bank?.accountNumber ? customCompany.bank : defaultBank;
-  const html = renderInvoiceHTML({ invoice, client, company, bank });
+  const html = renderInvoiceHTML({ invoice, client, company, bank, template });
   return renderHtmlToPdf(html);
 }
 

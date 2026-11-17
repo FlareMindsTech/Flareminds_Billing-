@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import { invoicePaymentState } from "../utils/invoicePayments.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -126,7 +127,13 @@ const socialIcon = (name) =>
     ${socialIcons[name] || ""}
   </svg>`;
 
-export function renderInvoiceHTML({ invoice, client = {}, company = {}, bank: bankParam = {} }) {
+export function renderInvoiceHTML({
+  invoice,
+  client = {},
+  company = {},
+  bank: bankParam = {},
+  template = null,
+}) {
   const items = invoice.items || invoice.lineItems || [];
 
   const subtotal =
@@ -169,6 +176,9 @@ export function renderInvoiceHTML({ invoice, client = {}, company = {}, bank: ba
       invoice.grandTotal ??
       subtotal + tax
   );
+
+  const paymentState = invoicePaymentState(invoice);
+  const showPaymentSummary = template?.content?.showPaymentSummary !== false;
 
   const bank = {
     accountNumber:
@@ -1312,6 +1322,22 @@ body {
             </span>
 
           </div>
+
+          ${
+            showPaymentSummary
+              ? `
+          <div class="totals-row">
+            <span>PAID</span>
+            <span>${money(paymentState.amountPaid)}</span>
+          </div>
+
+          <div class="totals-row">
+            <span>BALANCE DUE</span>
+            <span>${money(paymentState.balanceDue)}</span>
+          </div>
+          `
+              : ""
+          }
 
         </div>
 
