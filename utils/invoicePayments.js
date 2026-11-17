@@ -42,15 +42,14 @@ export function deriveInvoiceStatus(invoice, amountPaid, balanceDue, now = new D
 }
 
 // Derived values for API responses and PDFs. Invoices created before payments
-// existed have no amountPaid field; a legacy "paid" status is treated as fully
-// paid so old documents do not suddenly become outstanding.
+// existed have no amountPaid field; Mongoose applies the 0 default when it
+// hydrates those rows, so a "paid" status with nothing recorded is treated as
+// fully paid. This stops old documents from suddenly becoming outstanding.
 export function invoicePaymentState(invoice, now = new Date()) {
   const grandTotal = roundMoney(invoice?.grandTotal ?? 0);
-  const hasStoredPaid = invoice?.amountPaid !== undefined && invoice?.amountPaid !== null;
-  const legacyMarkedPaid = !hasStoredPaid && invoice?.status === "paid";
-  const amountPaid = roundMoney(
-    hasStoredPaid ? invoice.amountPaid : legacyMarkedPaid ? grandTotal : 0
-  );
+  const storedPaid = roundMoney(invoice?.amountPaid ?? 0);
+  const legacyMarkedPaid = invoice?.status === "paid" && storedPaid <= 0;
+  const amountPaid = roundMoney(legacyMarkedPaid ? grandTotal : storedPaid);
   const balanceDue = roundMoney(Math.max(0, grandTotal - amountPaid));
   const status = deriveInvoiceStatus(invoice, amountPaid, balanceDue, now);
 

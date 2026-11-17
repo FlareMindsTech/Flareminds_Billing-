@@ -28,6 +28,7 @@ let mongod;
 let superToken;
 let tokenA;
 let tokenB;
+let companyA;
 let clientA;
 let clientB;
 
@@ -157,6 +158,7 @@ before(async () => {
       phone: "1111111111",
     })
   )._id.toString();
+  companyA = (meA.body.company?._id || meA.body._id).toString();
   clientB = (
     await Client.create({
       companyId: meB.body.company?._id || meB.body._id,
@@ -440,4 +442,51 @@ test("concurrent payments cannot exceed the invoice total", async () => {
   assert.equal(stored.amountPaid, 900);
   assert.equal(stored.balanceDue, 100);
   assert.equal(stored.status, "partially_paid");
+});
+
+test("legacy paid invoices without stored payment fields stay fully paid", async () => {
+  // Insert straight into the collection so Mongoose defaults are not applied:
+  // this is exactly how rows created before the Payment model look on disk.
+  const legacyId = new mongoose.Types.ObjectId();
+  await Invoice.collection.insertOne({
+    _id: legacyId,
+    invoiceNumber: "PAYALPHA-INV-LEGACY-0001",
+    companyId: new mongoose.Types.ObjectId(companyA),
+    client: new mongoose.Types.ObjectId(clientA),
+    date: new Date("2025-01-01T00:00:00.000Z"),
+    dueDate: new Date("2025-01-15T00:00:00.000Z"),
+    lineItems: [
+      {
+        description: "Legacy paid work",
+        category: "other",
+        quantity: 1,
+        rate: 500,
+        amount: 500,
+        customFields: {},
+      },
+    ],
+    subTotal: 500,
+    taxPercent: 0,
+    taxAmount: 0,
+    grandTotal: 500,
+    status: "paid",
+    notes: "",
+    customFields: {},
+    createdAt: new Date("2025-01-01T00:00:00.000Z"),
+    updatedAt: new Date("2025-01-01T00:00:00.000Z"),
+  });
+
+  const detail = await getInvoice(tokenA, legacyId.toString());
+  assert.equal(detail.status, 200, JSON.stringify(detail.body));
+  assert.equal(detail.body.amountPaid, 500);
+  assert.equal(detail.body.balanceDue, 0);
+  assert.equal(detail.body.status, "paid");
+
+  const list = await request(app).get("/api/invoices").set(auth(tokenA));
+  assert.equal(list.status, 200);
+  const row = list.body.find((inv) => inv._id === legacyId.toString());
+  assert.ok(row, "legacy invoice missing from list");
+  assert.equal(row.amountPaid, 500);
+  assert.equal(row.balanceDue, 0);
+  assert.equal(row.status, "paid");
 });
