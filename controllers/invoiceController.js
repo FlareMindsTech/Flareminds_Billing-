@@ -380,7 +380,7 @@ export const createInvoice = async (req, res) => {
       invoiceId: String(invoice._id),
     });
 
-    res.status(201).json(invoice);
+    res.status(201).json(withEffectivePaymentFields(invoice));
   } catch (err) {
     console.error("Create invoice error:", err.message);
     const status = err.name === "ValidationError" ? 400 : 500;

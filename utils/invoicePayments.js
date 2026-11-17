@@ -3,6 +3,11 @@
 
 export const PAYABLE_INVOICE_STATUSES = ["sent", "partially_paid", "overdue"];
 
+// A partially paid invoice keeps its status, but it is still overdue once the
+// remaining balance passes its due date. This flag is derived on read so the
+// stored status never has to lie about both facts at once.
+export const NON_OVERDUE_STATUSES = ["draft", "cancelled", "paid"];
+
 // Money is stored as a Number but always normalized to 2 decimals at the
 // boundary so 0.1 + 0.2 never leaks into invoices, balances or API responses.
 export function roundMoney(value) {
@@ -15,6 +20,29 @@ export function startOfToday(now = new Date()) {
   const date = new Date(now);
   date.setHours(0, 0, 0, 0);
   return date;
+}
+
+// True when money is still owed after the due date, regardless of whether the
+// invoice is sent, overdue or partially_paid. Draft, cancelled and paid
+// invoices are never considered overdue.
+export function isInvoiceOverdue(invoice, balanceDue, now = new Date()) {
+  const status = invoice?.status;
+  if (NON_OVERDUE_STATUSES.includes(status)) return false;
+  if (roundMoney(balanceDue ?? invoice?.balanceDue ?? 0) <= 0) return false;
+
+  const dueDate = invoice?.dueDate ? new Date(invoice.dueDate) : null;
+  if (!dueDate || Number.isNaN(dueDate.getTime())) return false;
+
+  return dueDate.getTime() < startOfToday(now).getTime();
+}
+
+// Human-readable status for documents: "partially_paid" -> "Partially Paid".
+export function invoiceStatusLabel(status) {
+  const text = String(status || "").trim();
+  if (!text) return "Draft";
+  return text
+    .replace(/_/g, " ")
+    .replace(/\b[a-z]/g, (letter) => letter.toUpperCase());
 }
 
 // Status precedence: paid (nothing left) -> partially_paid (some money in)
@@ -52,8 +80,13 @@ export function invoicePaymentState(invoice, now = new Date()) {
   const amountPaid = roundMoney(legacyMarkedPaid ? grandTotal : storedPaid);
   const balanceDue = roundMoney(Math.max(0, grandTotal - amountPaid));
   const status = deriveInvoiceStatus(invoice, amountPaid, balanceDue, now);
+  const isOverdue = isInvoiceOverdue(
+    { status, dueDate: invoice?.dueDate },
+    balanceDue,
+    now
+  );
 
-  return { amountPaid, balanceDue, status, legacyMarkedPaid };
+  return { amountPaid, balanceDue, status, isOverdue, legacyMarkedPaid };
 }
 
 // Returns a plain object with the effective values, suitable for res.json() or
@@ -67,6 +100,7 @@ export function withEffectivePaymentFields(invoice, now = new Date()) {
   plainInvoice.amountPaid = state.amountPaid;
   plainInvoice.balanceDue = state.balanceDue;
   plainInvoice.status = state.status;
+  plainInvoice.isOverdue = state.isOverdue;
 
   return plainInvoice;
 }
@@ -81,12 +115,17 @@ export function applyInvoicePaymentState(invoice, payments = [], now = new Date(
   const balanceDue = roundMoney(Math.max(0, grandTotal - amountPaid));
   const previousStatus = invoice?.status;
   const status = deriveInvoiceStatus(invoice, amountPaid, balanceDue, now);
+  const isOverdue = isInvoiceOverdue(
+    { status, dueDate: invoice?.dueDate },
+    balanceDue,
+    now
+  );
 
   invoice.amountPaid = amountPaid;
   invoice.balanceDue = balanceDue;
   invoice.status = status;
 
-  return { amountPaid, balanceDue, status, previousStatus };
+  return { amountPaid, balanceDue, status, isOverdue, previousStatus };
 }
 
 export function isInvoicePayable(invoice, now = new Date()) {

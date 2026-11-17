@@ -367,6 +367,46 @@ test("voiding a payment keeps the record and reverts invoice status", async () =
   assert.equal(voidFull.body.invoice.balanceDue, 1000);
 });
 
+test("partially paid invoices past due stay partially_paid and report isOverdue", async () => {
+  const invoice = await createInvoice({
+    total: 1000,
+    dateOffset: -40,
+    dueOffset: -10,
+  });
+
+  const partial = await recordPayment(tokenA, invoice._id, {
+    amount: 400,
+    method: "cash",
+  });
+  assert.equal(partial.status, 201, JSON.stringify(partial.body));
+  assert.equal(partial.body.invoice.status, "partially_paid");
+  assert.equal(partial.body.invoice.balanceDue, 600);
+  assert.equal(partial.body.invoice.isOverdue, true);
+
+  const detail = await getInvoice(tokenA, invoice._id);
+  assert.equal(detail.status, 200, JSON.stringify(detail.body));
+  assert.equal(detail.body.status, "partially_paid");
+  assert.equal(detail.body.balanceDue, 600);
+  assert.equal(detail.body.isOverdue, true);
+
+  const overdueList = await request(app)
+    .get("/api/invoices?status=overdue")
+    .set(auth(tokenA));
+  assert.equal(overdueList.status, 200);
+  const overdueRow = overdueList.body.find((row) => row._id === invoice._id);
+  assert.ok(overdueRow, "partially paid overdue invoice missing from overdue filter");
+  assert.equal(overdueRow.status, "partially_paid");
+  assert.equal(overdueRow.isOverdue, true);
+
+  const remaining = await recordPayment(tokenA, invoice._id, {
+    amount: 600,
+    method: "cash",
+  });
+  assert.equal(remaining.status, 201, JSON.stringify(remaining.body));
+  assert.equal(remaining.body.invoice.status, "paid");
+  assert.equal(remaining.body.invoice.isOverdue, false);
+});
+
 test("overdue is computed from dueDate and a void reverts to overdue when still unpaid", async () => {
   const invoice = await createInvoice({
     total: 1000,
