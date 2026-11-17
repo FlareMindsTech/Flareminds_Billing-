@@ -8,6 +8,13 @@ import { sendInvoiceEmail } from "../services/emailService.js";
 import { sendInvoiceWhatsApp, buildWhatsAppShareLink } from "../services/whatsappService.js";
 import { audit } from "../utils/auditLog.js";
 import { isValidEmail } from "../utils/validation.js";
+import {
+  applyInvoicePaymentState,
+  invoicePaymentState,
+  roundMoney,
+  startOfToday,
+  withEffectivePaymentFields,
+} from "../utils/invoicePayments.js";
 import { snapshotForDocument } from "./templateController.js";
 
 const INVOICE_UPDATE_FIELDS = [
@@ -21,7 +28,14 @@ const INVOICE_UPDATE_FIELDS = [
   "customFields",
 ];
 const LINE_ITEM_CATEGORIES = new Set(["digital-marketing", "development", "other"]);
-const INVOICE_STATUSES = new Set(["draft", "sent", "paid", "overdue", "cancelled"]);
+const INVOICE_STATUSES = new Set([
+  "draft",
+  "sent",
+  "partially_paid",
+  "paid",
+  "overdue",
+  "cancelled",
+]);
 
 const isBadId = (id) => !mongoose.isValidObjectId(id);
 
@@ -194,26 +208,50 @@ export const listInvoices = async (req, res) => {
   if (!companyId) {
     return res.status(409).json({ message: "No active company is configured" });
   }
-  const filter = { companyId };
+  const conditions = [{ companyId }];
 
   if (status !== undefined) {
     if (typeof status !== "string" || !INVOICE_STATUSES.has(status)) {
       return res.status(400).json({ message: "Invalid status filter" });
     }
-    filter.status = status;
+
+    if (status === "overdue") {
+      // Unpaid invoices become overdue when their due date passes even if the
+      // stored status is still "sent"; include those in the filter.
+      conditions.push({
+        $or: [
+          { status: "overdue" },
+          {
+            status: { $in: ["sent", "partially_paid"] },
+            dueDate: { $lt: startOfToday() },
+          },
+        ],
+      });
+    } else if (status === "partially_paid") {
+      // Older rows may still carry "overdue" while holding a partial payment.
+      conditions.push({
+        $or: [
+          { status: "partially_paid" },
+          { status: "overdue", amountPaid: { $gt: 0 } },
+        ],
+      });
+    } else {
+      conditions.push({ status });
+    }
   }
 
   if (client !== undefined) {
     if (typeof client !== "string" || isBadId(client)) {
       return res.status(400).json({ message: "Invalid client filter" });
     }
-    filter.client = client;
+    conditions.push({ client });
   }
 
+  const filter = conditions.length === 1 ? conditions[0] : { $and: conditions };
   const invoices = await Invoice.find(filter)
     .populate("client")
     .sort({ createdAt: -1 });
-  res.json(invoices);
+  res.json(invoices.map((invoice) => withEffectivePaymentFields(invoice)));
 };
 
 export const getInvoice = async (req, res) => {
@@ -230,7 +268,7 @@ export const getInvoice = async (req, res) => {
     companyId,
   }).populate("client");
   if (!invoice) return res.status(404).json({ message: "Invoice not found" });
-  res.json(invoice);
+  res.json(withEffectivePaymentFields(invoice));
 };
 
 export const createInvoice = async (req, res) => {
@@ -326,6 +364,8 @@ export const createInvoice = async (req, res) => {
       taxPercent: tax,
       taxAmount,
       grandTotal,
+      amountPaid: 0,
+      balanceDue: roundMoney(grandTotal),
       notes: notes || "",
       customFields: documentCustomFields,
       templateId: templateInfo.templateId,
@@ -453,6 +493,33 @@ export const updateInvoice = async (req, res) => {
     const effectiveTax = updates.taxPercent ?? invoice.taxPercent ?? 0;
     const { items, subTotal, taxAmount, grandTotal } = computeTotals(effectiveItems, effectiveTax);
 
+    const paymentStateBeforeUpdate = invoicePaymentState(invoice);
+    const effectivePaid = paymentStateBeforeUpdate.amountPaid;
+
+    if (effectivePaid > roundMoney(grandTotal)) {
+      return res.status(400).json({
+        message: "Grand total cannot be less than the amount already paid",
+      });
+    }
+
+    if (
+      updates.status === "paid" &&
+      roundMoney(grandTotal - effectivePaid) > 0
+    ) {
+      return res.status(400).json({
+        message: "Record a payment for the remaining balance before marking this invoice paid",
+      });
+    }
+
+    if (
+      ["draft", "cancelled"].includes(updates.status) &&
+      effectivePaid > 0
+    ) {
+      return res.status(400).json({
+        message: "Void all payments before reverting this invoice to draft or cancelling it",
+      });
+    }
+
     const previousStatus = invoice.status;
     const changedFields = Object.keys(updates);
 
@@ -461,7 +528,13 @@ export const updateInvoice = async (req, res) => {
       subTotal,
       taxAmount,
       grandTotal,
+      amountPaid: effectivePaid,
+      balanceDue: roundMoney(Math.max(0, grandTotal - effectivePaid)),
     });
+
+    // Re-derive the status so paid/partially_paid/overdue always agree with the
+    // money recorded against this invoice.
+    applyInvoicePaymentState(invoice, [{ amount: effectivePaid }]);
 
     await invoice.save();
     await invoice.populate("client");
@@ -482,7 +555,7 @@ export const updateInvoice = async (req, res) => {
       });
     }
 
-    res.json(invoice);
+    res.json(withEffectivePaymentFields(invoice));
   } catch (err) {
     console.error("Update invoice error:", err.message);
     const status = err.name === "ValidationError" ? 400 : 500;
@@ -608,6 +681,9 @@ export const emailInvoice = async (req, res) => {
     });
     invoice.sentLog.push({ channel: "email", to, success: true });
     if (invoice.status === "draft") invoice.status = "sent";
+    const emailPaymentState = invoicePaymentState(invoice);
+    invoice.amountPaid = emailPaymentState.amountPaid;
+    invoice.balanceDue = emailPaymentState.balanceDue;
     await invoice.save();
 
     audit("invoice_delivery", {
@@ -685,6 +761,9 @@ export const whatsappInvoice = async (req, res) => {
 
     invoice.sentLog.push({ channel: "whatsapp", to, success: true });
     if (invoice.status === "draft") invoice.status = "sent";
+    const whatsappPaymentState = invoicePaymentState(invoice);
+    invoice.amountPaid = whatsappPaymentState.amountPaid;
+    invoice.balanceDue = whatsappPaymentState.balanceDue;
     await invoice.save();
 
     audit("invoice_delivery", {

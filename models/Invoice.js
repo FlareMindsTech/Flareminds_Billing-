@@ -33,6 +33,11 @@ const invoiceSchema = new mongoose.Schema(
     taxAmount: { type: Number, default: 0 },
     grandTotal: { type: Number, required: true },
 
+    // Payment-derived fields. Both are recomputed from non-voided Payment
+    // records whenever money is recorded or voided; clients never set them.
+    amountPaid: { type: Number, default: 0 },
+    balanceDue: { type: Number, default: 0 },
+
     notes: {
       type: String,
       default:
@@ -49,7 +54,7 @@ const invoiceSchema = new mongoose.Schema(
 
     status: {
       type: String,
-      enum: ["draft", "sent", "paid", "overdue", "cancelled"],
+      enum: ["draft", "sent", "partially_paid", "paid", "overdue", "cancelled"],
       default: "draft",
     },
 

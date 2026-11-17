@@ -10,6 +10,11 @@ import {
   emailInvoice,
   whatsappInvoice,
 } from "../controllers/invoiceController.js";
+import {
+  listInvoicePayments,
+  recordInvoicePayment,
+  voidInvoicePayment,
+} from "../controllers/paymentController.js";
 
 const router = express.Router();
 
@@ -41,5 +46,9 @@ router.delete("/:id", deleteInvoice);
 router.get("/:id/pdf", pdfLimiter, downloadInvoicePDF);
 router.post("/:id/send-email", deliveryLimiter, emailInvoice);
 router.post("/:id/send-whatsapp", deliveryLimiter, whatsappInvoice);
+
+router.get("/:id/payments", listInvoicePayments);
+router.post("/:id/payments", recordInvoicePayment);
+router.post("/:id/payments/:paymentId/void", voidInvoicePayment);
 
 export default router;
