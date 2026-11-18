@@ -10,6 +10,24 @@ const lineItemSchema = new mongoose.Schema(
     quantity: { type: Number, default: 1 },
     rate: { type: Number, required: true },
     amount: { type: Number, required: true }, // quantity * rate, kept explicit for easy editing
+    // Per-line GST / discount bookkeeping (server-computed for discounts/tax).
+    taxPercent: { type: Number, default: 0, min: 0, max: 100 },
+    hsnSac: { type: String, trim: true, default: "" },
+    discountType: {
+      type: String,
+      enum: ["none", "percent", "amount"],
+      default: "none",
+    },
+    discountValue: { type: Number, default: 0, min: 0 },
+    discountAmount: { type: Number, default: 0 },
+    taxableAmount: { type: Number, default: 0 },
+    taxAmount: { type: Number, default: 0 },
+    lineTotal: { type: Number, default: 0 },
+    // Place of supply tax split for this line (CGST+SGST intra / IGST inter).
+    taxType: { type: String, enum: ["cgst_sgst", "igst"], default: "cgst_sgst" },
+    cgstAmount: { type: Number, default: 0 },
+    sgstAmount: { type: Number, default: 0 },
+    igstAmount: { type: Number, default: 0 },
     // Line item level dynamic custom fields (e.g. HSN code, batch, serial number)
     customFields: { type: mongoose.Schema.Types.Mixed, default: () => ({}) },
   },
@@ -37,6 +55,13 @@ const invoiceSchema = new mongoose.Schema(
     // records whenever money is recorded or voided; clients never set them.
     amountPaid: { type: Number, default: 0 },
     balanceDue: { type: Number, default: 0 },
+
+    // GST place of supply and split amounts (CGST+SGST intra-state,
+    // IGST inter-state). Stored per invoice so old documents keep rendering.
+    taxType: { type: String, enum: ["cgst_sgst", "igst"], default: "cgst_sgst" },
+    cgstAmount: { type: Number, default: 0 },
+    sgstAmount: { type: Number, default: 0 },
+    igstAmount: { type: Number, default: 0 },
 
     notes: {
       type: String,

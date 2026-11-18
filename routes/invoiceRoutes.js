@@ -14,6 +14,7 @@ import {
   listInvoicePayments,
   recordInvoicePayment,
   voidInvoicePayment,
+  getCollectionSummary,
 } from "../controllers/paymentController.js";
 
 const router = express.Router();
@@ -38,6 +39,7 @@ export const deliveryLimiter = rateLimit({
 });
 
 router.get("/", listInvoices);
+router.get("/collection-summary", getCollectionSummary);
 router.get("/:id", getInvoice);
 router.post("/", createInvoice);
 router.put("/:id", updateInvoice);

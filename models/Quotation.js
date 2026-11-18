@@ -23,6 +23,7 @@ const lineItemSchema = new mongoose.Schema(
     taxPercent: { type: Number, default: 0, min: 0, max: 100 },
     taxAmount: { type: Number, default: 0 },
     lineTotal: { type: Number, required: true },
+    hsnSac: { type: String, trim: true, default: "" },
     // Line item level dynamic custom fields (e.g. HSN code, serial number, batch, etc.)
     customFields: { type: mongoose.Schema.Types.Mixed, default: () => ({}) },
   },

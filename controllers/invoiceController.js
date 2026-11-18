@@ -15,6 +15,13 @@ import {
   startOfToday,
   withEffectivePaymentFields,
 } from "../utils/invoicePayments.js";
+import {
+  computeTaxSplit,
+  resolvePlaceOfSupply,
+  TAX_TYPE_CGST_SGST,
+  TAX_TYPE_IGST,
+} from "../utils/gst.js";
+import { computeQuotationTotals } from "../services/quotationCalculator.js";
 import { snapshotForDocument } from "./templateController.js";
 
 const INVOICE_UPDATE_FIELDS = [
@@ -89,6 +96,30 @@ function validateLineItems(lineItems, itemFieldDefs = []) {
 
     if (item.category !== undefined && !LINE_ITEM_CATEGORIES.has(item.category)) {
       return "Invalid line item category";
+    }
+
+    if (item.taxPercent !== undefined && item.taxPercent !== null) {
+      const taxPercent = Number(item.taxPercent);
+      if (!Number.isFinite(taxPercent) || taxPercent < 0 || taxPercent > 100) {
+        return `Line item ${index + 1} tax percent must be a number between 0 and 100`;
+      }
+    }
+
+    if (item.discountType !== undefined) {
+      if (!["none", "percent", "amount"].includes(item.discountType)) {
+        return `Line item ${index + 1} discount type must be none, percent or amount`;
+      }
+      const discountValue = Number(item.discountValue ?? 0);
+      const lineBase = Number(item.quantity ?? 1) * Number(item.rate ?? 0);
+      if (!Number.isFinite(discountValue) || discountValue < 0) {
+        return `Line item ${index + 1} discount value must be at least 0`;
+      }
+      if (item.discountType === "percent" && discountValue > 100) {
+        return `Line item ${index + 1} percent discount cannot exceed 100`;
+      }
+      if (item.discountType === "amount" && discountValue > lineBase) {
+        return `Line item ${index + 1} amount discount cannot exceed the line base`;
+      }
     }
 
     if (itemFieldDefs.length > 0) {
@@ -190,16 +221,70 @@ export async function nextInvoiceNumber(now = new Date(), company = null) {
 
 // Recomputes amount per line item and the invoice totals server-side,
 // so the frontend can't send a tampered grand total.
-export function computeTotals(lineItems, taxPercent = 0) {
-  const items = lineItems.map((item) => ({
-    ...item,
-    amount: Number(item.quantity || 1) * Number(item.rate),
-    customFields: item.customFields || {},
-  }));
-  const subTotal = items.reduce((sum, item) => sum + item.amount, 0);
-  const taxAmount = (subTotal * Number(taxPercent || 0)) / 100;
-  const grandTotal = subTotal + taxAmount;
-  return { items, subTotal, taxAmount, grandTotal };
+// GST: tax is applied per line on the discounted base; intra-state splits into
+// CGST + SGST (half each), inter-state uses a single IGST. Totals are rounded per
+// line and then summed so subtotal - discount + tax always reconciles exactly.
+export function computeTotals(lineItems = [], docTaxPercent = 0, shippingCharges = 0, placeOfSupply = "intra_state") {
+  const totals = computeQuotationTotals(
+    (lineItems || []).map((item) => ({
+      quantity: Number(item.quantity ?? 1),
+      unitPrice: Number(item.rate ?? item.unitPrice ?? 0),
+      description: item.description,
+      category: item.category || "other",
+      hsnSac: item.hsnSac || "",
+      customFields: item.customFields || {},
+      discountType: item.discountType || "none",
+      discountValue: Number(item.discountValue ?? 0),
+      taxPercent: Number(item.taxPercent ?? docTaxPercent ?? 0),
+    })),
+    Number(shippingCharges || 0)
+  );
+
+  const taxType =
+    String(placeOfSupply || resolvePlaceOfSupply()).toLowerCase() === "inter_state"
+      ? TAX_TYPE_IGST
+      : TAX_TYPE_CGST_SGST;
+
+  const items = (totals.items || []).map((item) => {
+    const base = roundMoney(Number(item.quantity) * Number(item.unitPrice));
+    const discountAmount = roundMoney(item.discountAmount || 0);
+    const taxableAmount = roundMoney(base - discountAmount);
+    const computed = computeTaxSplit(taxableAmount, taxType, item.taxPercent);
+
+    return {
+      description: item.description,
+      category: item.category || "other",
+      quantity: item.quantity,
+      rate: item.unitPrice,
+      amount: base,
+      taxPercent: item.taxPercent,
+      hsnSac: item.hsnSac || "",
+      discountType: item.discountType || "none",
+      discountValue: Number(item.discountValue || 0),
+      discountAmount,
+      taxableAmount,
+      taxAmount: computed.tax,
+      lineTotal: roundMoney(taxableAmount + computed.tax),
+      taxType,
+      cgstAmount: computed.cgstAmount,
+      sgstAmount: computed.sgstAmount,
+      igstAmount: computed.igstAmount,
+      customFields: item.customFields || {},
+    };
+  });
+
+  return {
+    items,
+    subTotal: totals.subTotal,
+    discountTotal: totals.discountTotal,
+    taxTotal: totals.taxTotal,
+    shippingCharges: totals.shippingCharges,
+    grandTotal: totals.grandTotal,
+    taxType,
+    cgstAmount: items.reduce((sum, item) => sum + Number(item.cgstAmount || 0), 0),
+    sgstAmount: items.reduce((sum, item) => sum + Number(item.sgstAmount || 0), 0),
+    igstAmount: items.reduce((sum, item) => sum + Number(item.igstAmount || 0), 0),
+  };
 }
 
 export const listInvoices = async (req, res) => {
@@ -324,15 +409,19 @@ export const createInvoice = async (req, res) => {
       if (customErr) return res.status(400).json({ message: customErr });
     }
 
+    const gstRegistered = activeCompany?.gstRegistered !== false;
     const normalizedItems = lineItems.map((item) => ({
       ...item,
+      taxPercent: gstRegistered
+        ? (item.taxPercent === "" || item.taxPercent === undefined ? null : item.taxPercent)
+        : 0,
       customFields: applyCustomDefaults(item.customFields, itemFieldDefs),
     }));
     const lineItemError = validateLineItems(normalizedItems, itemFieldDefs);
     if (lineItemError) return res.status(400).json({ message: lineItemError });
 
-    const tax = parseTaxPercent(taxPercent);
-    if (tax === null) {
+    const tax = gstRegistered ? parseTaxPercent(taxPercent) : 0;
+    if (gstRegistered && tax === null) {
       return res.status(400).json({ message: "Tax percent must be a number between 0 and 100" });
     }
 
@@ -350,7 +439,16 @@ export const createInvoice = async (req, res) => {
       return res.status(400).json({ message: "Due date must be after invoice date" });
     }
 
-    const { items, subTotal, taxAmount, grandTotal } = computeTotals(normalizedItems, tax);
+    const placeOfSupply = resolvePlaceOfSupply({
+      company: activeCompany,
+      client: clientDoc,
+    });
+    const { items, subTotal, discountTotal, taxTotal, grandTotal, taxType, cgstAmount, sgstAmount, igstAmount } = computeTotals(
+      normalizedItems,
+      tax,
+      0,
+      placeOfSupply
+    );
     const invoiceNumber = await nextInvoiceNumber(invoiceDate, activeCompany);
 
     const invoicePayload = {
@@ -362,8 +460,12 @@ export const createInvoice = async (req, res) => {
       lineItems: items,
       subTotal,
       taxPercent: tax,
-      taxAmount,
+      taxAmount: taxTotal,
       grandTotal,
+      taxType,
+      cgstAmount,
+      sgstAmount,
+      igstAmount,
       amountPaid: 0,
       balanceDue: roundMoney(grandTotal),
       notes: notes || "",
@@ -403,6 +505,7 @@ export const updateInvoice = async (req, res) => {
     const invoice = await Invoice.findOne({ _id: req.params.id, companyId });
     if (!invoice) return res.status(404).json({ message: "Invoice not found" });
 
+    const clientDoc = await Client.findOne({ _id: invoice.client, companyId });
     const body = req.body || {};
     const updates = {};
     for (const key of INVOICE_UPDATE_FIELDS) {
@@ -479,20 +582,34 @@ export const updateInvoice = async (req, res) => {
       return res.status(400).json({ message: "Due date must be after invoice date" });
     }
 
+    const gstRegistered = (req.company || activeCompany)?.gstRegistered !== false;
     const effectiveItems = (updates.lineItems ?? invoice.lineItems).map((item) => ({
+      ...item,
       description: item.description,
       category: item.category,
       quantity: item.quantity,
       rate: item.rate,
+      hsnSac: item.hsnSac ?? "",
+      taxPercent: gstRegistered ? item.taxPercent : 0,
+      discountType: item.discountType ?? "none",
+      discountValue: item.discountValue ?? 0,
       customFields: applyCustomDefaults(item.customFields, itemFieldDefs),
     }));
     const effectiveItemError = validateLineItems(effectiveItems, itemFieldDefs);
     if (effectiveItemError) {
       return res.status(400).json({ message: effectiveItemError });
     }
-    const effectiveTax = updates.taxPercent ?? invoice.taxPercent ?? 0;
-    const { items, subTotal, taxAmount, grandTotal } = computeTotals(effectiveItems, effectiveTax);
-
+    const effectiveTax = gstRegistered ? (updates.taxPercent ?? invoice.taxPercent ?? 0) : 0;
+    const placeOfSupply = resolvePlaceOfSupply({
+      company: activeCompany,
+      client: clientDoc,
+    });
+    const { items, subTotal, discountTotal, taxTotal, grandTotal, taxType, cgstAmount, sgstAmount, igstAmount } = computeTotals(
+      effectiveItems,
+      effectiveTax,
+      0,
+      placeOfSupply
+    );
     const paymentStateBeforeUpdate = invoicePaymentState(invoice);
     const effectivePaid = paymentStateBeforeUpdate.amountPaid;
 
@@ -526,8 +643,12 @@ export const updateInvoice = async (req, res) => {
     Object.assign(invoice, updates, {
       lineItems: items,
       subTotal,
-      taxAmount,
+      taxAmount: taxTotal,
       grandTotal,
+      taxType,
+      cgstAmount,
+      sgstAmount,
+      igstAmount,
       amountPaid: effectivePaid,
       balanceDue: roundMoney(Math.max(0, grandTotal - effectivePaid)),
     });

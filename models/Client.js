@@ -9,6 +9,8 @@ const clientSchema = new mongoose.Schema(
     whatsapp: { type: String, trim: true },
     phone: { type: String, trim: true },
     gstn: { type: String, trim: true },
+    state: { type: String, trim: true, default: "" },
+    stateCode: { type: String, trim: true, uppercase: true, default: "" },
     notes: { type: String, trim: true },
 
     // Hosting company / tenant reference for multi-company isolation

@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { invoicePaymentState, invoiceStatusLabel } from "../utils/invoicePayments.js";
+import { TAX_TYPE_CGST_SGST, TAX_TYPE_IGST } from "../utils/gst.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -214,63 +215,136 @@ export function amountInWords(number, currency = "INR") {
 }
 
 export function computeGstBreakup(items = [], doc = {}) {
+  const taxType =
+    String(doc.taxType || TAX_TYPE_CGST_SGST).toLowerCase() === TAX_TYPE_IGST
+      ? TAX_TYPE_IGST
+      : TAX_TYPE_CGST_SGST;
+  const docTaxRate = Number(
+    doc.taxPercent ??
+      (doc.taxTotal && doc.subTotal
+        ? (doc.taxTotal / doc.subTotal) * 100
+        : doc.taxAmount && doc.subTotal
+        ? (doc.taxAmount / doc.subTotal) * 100
+        : 0) ??
+      0
+  );
+  // Legacy detection: an invoice whose every line is 0/unset while the
+  // document carries a positive rate is treated as "not yet migrated" and
+  // inherits the document rate for all lines.
+  const anyNonZero = items.some(
+    (i) => i.taxPercent !== null && i.taxPercent !== undefined && Number(i.taxPercent) > 0
+  );
+  const allZeroLegacy =
+    items.length > 0 &&
+    !anyNonZero &&
+    items.every(
+      (i) => i.taxPercent === null || i.taxPercent === undefined || Number(i.taxPercent) === 0
+    ) &&
+    Number.isFinite(docTaxRate) &&
+    docTaxRate > 0;
   const groups = new Map();
 
   for (const item of items) {
     const qty = Number(item.quantity ?? 1);
     const rate = Number(item.rate ?? item.unitPrice ?? 0);
     const baseAmount = Number(item.amount ?? item.lineTotal ?? qty * rate);
-    const taxRate = Number(
-      item.taxPercent ??
-      doc.taxPercent ??
-      (doc.taxTotal && doc.subTotal ? (doc.taxTotal / doc.subTotal) * 100 : 0) ??
-      0
+    const discountAmount = Number(item.discountAmount ?? 0);
+    const taxableValue = Number((baseAmount - discountAmount).toFixed(2));
+    const rawLineRate = item.taxPercent ?? item.taxRate;
+    let taxRate;
+    if (rawLineRate === null || rawLineRate === undefined) {
+      taxRate = Number.isFinite(docTaxRate) ? docTaxRate : 0;
+    } else if (Number(rawLineRate) === 0 && allZeroLegacy) {
+      taxRate = Number.isFinite(docTaxRate) ? docTaxRate : 0;
+    } else {
+      taxRate = Number(rawLineRate);
+    }
+    const taxAmount = Number(
+      item.taxAmount ??
+      Math.round(taxableValue * (taxRate / 100) * 100) / 100
     );
+    const hsn =
+      item.hsnSac ||
+      item.hsnCode ||
+      item.hsn ||
+      item.customFields?.hsnSac ||
+      item.customFields?.hsnCode ||
+      item.customFields?.hsn ||
+      doc.defaultHsnSac ||
+      "";
 
-    const existing = groups.get(taxRate) || {
+    const key = `${taxRate}|${hsn}`;
+    const existing = groups.get(key) || {
+      taxType,
       taxRate,
+      hsn,
       taxableValue: 0,
-      cgstRate: taxRate / 2,
-      sgstRate: taxRate / 2,
+      cgstRate: TAX_TYPE_CGST_SGST === taxType ? taxRate / 2 : 0,
+      sgstRate: TAX_TYPE_CGST_SGST === taxType ? taxRate / 2 : 0,
       cgstAmount: 0,
       sgstAmount: 0,
+      igstRate: TAX_TYPE_CGST_SGST === taxType ? 0 : taxRate,
+      igstAmount: 0,
       totalTax: 0,
     };
 
-    existing.taxableValue += baseAmount;
-    groups.set(taxRate, existing);
+    existing.taxableValue = Number((existing.taxableValue + taxableValue).toFixed(2));
+    groups.set(key, existing);
   }
 
   const breakup = [];
   let totalTaxable = 0;
   let totalCgst = 0;
   let totalSgst = 0;
+  let totalIgst = 0;
   let totalTax = 0;
 
   for (const [, grp] of groups.entries()) {
-    const halfRate = grp.taxRate / 2;
-    const cgst = Math.round(grp.taxableValue * (halfRate / 100) * 100) / 100;
-    const sgst = Math.round(grp.taxableValue * (halfRate / 100) * 100) / 100;
-    const tax = cgst + sgst;
+    const cgstRate = grp.cgstRate;
+    const sgstRate = grp.sgstRate;
+    const igstRate = grp.igstRate;
+    const halfRate = grp.cgstRate;
+    const cgst = TAX_TYPE_CGST_SGST === grp.taxType
+      ? Math.round(grp.taxableValue * (halfRate / 100) * 100) / 100
+      : 0;
+    const sgst = TAX_TYPE_CGST_SGST === grp.taxType
+      ? Math.round(grp.taxableValue * (sgstRate / 100) * 100) / 100
+      : 0;
+    const igst = TAX_TYPE_IGST === grp.taxType
+      ? Math.round(grp.taxableValue * (igstRate / 100) * 100) / 100
+      : 0;
+    const tax = Math.round((cgst + sgst + igst) * 100) / 100;
 
     grp.cgstAmount = cgst;
     grp.sgstAmount = sgst;
+    grp.igstAmount = igst;
     grp.totalTax = tax;
 
     totalTaxable += grp.taxableValue;
     totalCgst += cgst;
     totalSgst += sgst;
+    totalIgst += igst;
     totalTax += tax;
 
     breakup.push(grp);
   }
+
+  // Reconcile the breakup total with the invoice's stored tax amount so the
+  // rendered total tax always matches the stored value (handles legacy data).
+  const storedTaxAmount = Number(doc.taxAmount);
+  const reconciledTotalTax =
+    Number.isFinite(storedTaxAmount) && storedTaxAmount >= 0 && items.length > 0
+      ? storedTaxAmount
+      : totalTax;
 
   return {
     breakup,
     totalTaxable,
     totalCgst,
     totalSgst,
-    totalTax,
+    totalIgst,
+    totalTax: reconciledTotalTax,
+    taxType,
   };
 }
 
@@ -429,7 +503,7 @@ function renderClient({ client, labels }) {
     </section>`;
 }
 
-function renderItems({ items, docType, template, labels, currency }) {
+function renderItems({ items, docType, template, labels, currency, doc }) {
   const columns = template.columns || {};
   const isQuotation = docType === "quotation";
   const itemDefs = (template.itemCustomFields || []).filter(
@@ -508,7 +582,7 @@ function renderItems({ items, docType, template, labels, currency }) {
           }
           ${
             isQuotation && columns.tax !== false
-              ? `<td class="num">${item.taxAmount ? money(item.taxAmount, currency) : `${Number(item.taxPercent || 0)}%`}</td>`
+              ? `<td class="num">${item.taxAmount ? money(item.taxAmount, currency) : `${Number(item.taxPercent != null ? item.taxPercent : (doc?.taxPercent || 0))}%`}</td>`
               : ""
           }
           ${customColumns
@@ -1024,7 +1098,25 @@ function renderTaxInvoiceDocument({ docType, doc, client, company, template, cur
     const qty = Number(item.quantity ?? 1);
     const unitPrice = Number(item.rate ?? item.unitPrice ?? 0);
     const amount = Number(item.amount ?? item.lineTotal ?? qty * unitPrice);
-    const taxRate = Number(item.taxPercent ?? doc.taxPercent ?? 0);
+    const rawLineRate = item.taxPercent ?? item.taxRate;
+    const docRate = Number(doc.taxPercent ?? 0);
+    let taxRate;
+    if (rawLineRate === null || rawLineRate === undefined) {
+      taxRate = Number.isFinite(docRate) ? docRate : 0;
+    } else if (Number(rawLineRate) === 0) {
+      const anyNonZero = items.some(
+        (i) => i.taxPercent !== null && i.taxPercent !== undefined && Number(i.taxPercent) > 0
+      );
+      const allZeroLegacy =
+        items.length > 0 &&
+        !anyNonZero &&
+        items.every((i) => i.taxPercent === null || i.taxPercent === undefined || Number(i.taxPercent) === 0) &&
+        Number.isFinite(docRate) &&
+        docRate > 0;
+      taxRate = allZeroLegacy ? docRate : 0;
+    } else {
+      taxRate = Number(rawLineRate);
+    }
     const taxAmount = Number(
       item.taxAmount ?? Math.round(amount * (taxRate / 100) * 100) / 100
     );
@@ -1038,7 +1130,8 @@ function renderTaxInvoiceDocument({ docType, doc, client, company, template, cur
       item.customFields?.hsnCode ||
       item.hsnCode ||
       item.hsn ||
-      "85414300";
+      doc?.defaultHsnSac ||
+      "";
     const unit = item.unit || "Set";
 
     return `
@@ -1061,17 +1154,36 @@ function renderTaxInvoiceDocument({ docType, doc, client, company, template, cur
   const effectiveSubtotal = Number(doc.subTotal ?? subtotal);
   const effectiveTotalTax = Number(doc.taxTotal ?? doc.taxAmount ?? totalGst);
 
-  const { breakup, totalTaxable, totalCgst, totalSgst, totalTax } = computeGstBreakup(items, doc);
-  const gstRows = breakup.map((grp) => `
-    <tr>
-      <td class="num">${Number(grp.taxableValue).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-      <td class="center">${grp.cgstRate.toFixed(2)}%</td>
-      <td class="num">${Number(grp.cgstAmount).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-      <td class="center">${grp.sgstRate.toFixed(2)}%</td>
-      <td class="num">${Number(grp.sgstAmount).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-      <td class="num">${Number(grp.totalTax).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-    </tr>
-  `).join("");
+  const { breakup, totalTaxable, totalCgst, totalSgst, totalIgst, totalTax, taxType } = computeGstBreakup(items, doc);
+  const isInterState = String(taxType || "").toLowerCase() === TAX_TYPE_IGST;
+
+  const gstCell = (value) =>
+    Number(value || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  const gstRows = breakup.map((grp) => {
+    const value = gstCell(grp.taxableValue);
+    const tax = gstCell(grp.totalTax);
+
+    if (isInterState) {
+      return `
+      <tr>
+        <td class="num">${value}</td>
+        <td class="center">${Number(grp.igstRate || 0).toFixed(2)}%</td>
+        <td class="num">${gstCell(grp.igstAmount)}</td>
+        <td class="num">${tax}</td>
+      </tr>`;
+    }
+
+    return `
+      <tr>
+        <td class="num">${value}</td>
+        <td class="center">${Number(grp.cgstRate).toFixed(2)}%</td>
+        <td class="num">${gstCell(grp.cgstAmount)}</td>
+        <td class="center">${Number(grp.sgstRate).toFixed(2)}%</td>
+        <td class="num">${gstCell(grp.sgstAmount)}</td>
+        <td class="num">${tax}</td>
+      </tr>`;
+  }).join("");
 
   const bank = plain(company.bank) || {};
   const bankLines = [
@@ -1106,26 +1218,31 @@ function renderTaxInvoiceDocument({ docType, doc, client, company, template, cur
       <thead>
         <tr>
           <th rowspan="2" style="width:24%;">Taxable Value</th>
-          <th colspan="2">CGST</th>
-          <th colspan="2">SGST/UTGST</th>
+          ${
+            isInterState
+              ? `<th colspan="2">IGST</th>`
+              : `<th colspan="2">CGST</th><th colspan="2">SGST/UTGST</th>`
+          }
           <th rowspan="2" style="width:20%;">Total Tax Amount</th>
         </tr>
         <tr>
-          <th style="width:12%;">Rate</th>
-          <th style="width:16%;">Amount</th>
-          <th style="width:12%;">Rate</th>
-          <th style="width:16%;">Amount</th>
+          ${
+            isInterState
+              ? `<th style="width:12%;">Rate</th><th style="width:16%;">Amount</th>`
+              : `<th style="width:12%;">Rate</th><th style="width:16%;">Amount</th><th style="width:12%;">Rate</th><th style="width:16%;">Amount</th>`
+          }
         </tr>
       </thead>
       <tbody>
         ${gstRows}
         <tr class="total-row-highlight">
-          <td class="num"><strong>Total: ${Number(totalTaxable || effectiveSubtotal).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></td>
-          <td></td>
-          <td class="num"><strong>${Number(totalCgst).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></td>
-          <td></td>
-          <td class="num"><strong>${Number(totalSgst).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></td>
-          <td class="num"><strong>${Number(totalTax || effectiveTotalTax).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></td>
+          <td class="num"><strong>Total: ${gstCell(totalTaxable || effectiveSubtotal)}</strong></td>
+          ${
+            isInterState
+              ? `<td></td><td class="num"><strong>${gstCell(totalIgst || totalTax)}</strong></td>`
+              : `<td></td><td class="num"><strong>${gstCell(totalCgst)}</strong></td><td></td><td class="num"><strong>${gstCell(totalSgst)}</strong></td>`
+          }
+          <td class="num"><strong>${gstCell(totalTax || effectiveTotalTax)}</strong></td>
         </tr>
       </tbody>
     </table>`
@@ -1175,6 +1292,11 @@ function renderTaxInvoiceDocument({ docType, doc, client, company, template, cur
     <div class="tax-meta-ribbon">
       <div><strong>${isInvoice ? "Invoice No:" : "Quotation No:"}</strong> ${escapeHtml(docNumber)}</div>
       <div><strong>Date:</strong> ${formatDate(docDate)}</div>
+      ${
+        isInterState
+          ? `<div><strong>Place of Supply:</strong> ${escapeHtml(client.state || client.company || company.state || "Customer")}</div>`
+          : ""
+      }
     </div>
 
     <div class="tax-address-grid">
@@ -1928,7 +2050,7 @@ export function renderDynamicDocumentHTML({ docType, doc, client, company, templ
     header: () => renderHeader({ company: safeCompany, layout, labels, docType }),
     meta: () => renderMeta({ doc: safeDoc, docType, labels }),
     client: () => renderClient({ client: clientData, labels }),
-    items: () => renderItems({ items, docType, template: safeTemplate, labels, currency }),
+    items: () => renderItems({ items, docType, template: safeTemplate, labels, currency, doc: safeDoc }),
     totals: () => renderTotals({ doc: safeDoc, docType, labels, currency, template: safeTemplate }),
     bank: () => renderBank({ company: safeCompany }),
     notes: () => renderNotes({ doc: safeDoc, labels }),

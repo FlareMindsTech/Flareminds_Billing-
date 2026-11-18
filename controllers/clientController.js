@@ -4,6 +4,8 @@ import Invoice from "../models/Invoice.js";
 import Quotation from "../models/Quotation.js";
 import { audit } from "../utils/auditLog.js";
 import { isValidEmail } from "../utils/validation.js";
+import { stateCodeForName } from "../utils/indianStates.js";
+import { resolveStateCode, normalizeGstin } from "../utils/gst.js";
 
 const CLIENT_FIELDS = [
   "name",
@@ -13,6 +15,8 @@ const CLIENT_FIELDS = [
   "whatsapp",
   "phone",
   "gstn",
+  "state",
+  "stateCode",
   "notes",
   "isActive",
 ];
@@ -45,6 +49,32 @@ function validateClient(data, { requireName = false } = {}) {
 
   if (data.isActive !== undefined && typeof data.isActive !== "boolean") {
     return "isActive must be a boolean.";
+  }
+
+  if (data.state !== undefined || data.stateCode !== undefined) {
+    const state = (data.state ?? "").trim();
+    const code = (data.stateCode ?? "").trim().toUpperCase();
+    if (code && !/^[0-9]{2}$/.test(code)) {
+      return "GST state code must be 2 digits.";
+    }
+    if (state && code) {
+      const expected = stateCodeForName(state);
+      if (expected && expected !== code) {
+        return "State and GST state code do not match.";
+      }
+    }
+    if (state && !code) {
+      const expected = stateCodeForName(state);
+      if (expected) data.stateCode = expected;
+    }
+  }
+
+  if (data.gstn !== undefined && !data.stateCode) {
+    const normalized = normalizeGstin(data.gstn);
+    if (normalized) {
+      const derived = resolveStateCode({ gstn: normalized });
+      if (derived) data.stateCode = derived;
+    }
   }
 
   return null;
@@ -91,7 +121,6 @@ export const createClient = async (req, res) => {
 
   try {
     const client = await Client.create(data);
-
     audit("client_created", {
       actor: req.admin?.email,
       clientId: String(client._id),

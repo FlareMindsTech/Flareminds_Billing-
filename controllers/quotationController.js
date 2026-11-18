@@ -13,6 +13,7 @@ import { computeQuotationTotals, roundMoney } from "../services/quotationCalcula
 import { nextQuotationNumber } from "../services/quotationNumber.js";
 import { audit } from "../utils/auditLog.js";
 import { isValidEmail } from "../utils/validation.js";
+import { resolvePlaceOfSupply } from "../utils/gst.js";
 import {
   applyCustomDefaults,
   computeTotals,
@@ -32,7 +33,6 @@ const DELETABLE_STATUSES = new Set(["draft", "rejected"]);
 const ACCEPTABLE_STATUSES = new Set(["draft", "sent"]);
 const REJECTABLE_STATUSES = new Set(["draft", "sent"]);
 const DELIVERABLE_STATUSES = new Set(["draft", "sent"]);
-
 // Fields a client may send on create/update. numbering, totals, status,
 // sentLog, acceptance data and conversion identifiers are always server-owned.
 const QUOTATION_WRITABLE_FIELDS = [
@@ -98,8 +98,6 @@ const buildClientSnapshot = (clientDoc) => ({
   phone: clientDoc?.phone || "",
   gstn: clientDoc?.gstn || "",
 });
-
-const safeMoney = (value) => round2(value);
 
 const sanitizeDeliveryError = (err) =>
   String(err?.message || "Delivery failed")
@@ -176,9 +174,12 @@ function validateQuotationItems(rawItems, itemFieldDefs = []) {
       return { error: `Line item ${index + 1} percentage discount cannot exceed 100%` };
     }
 
-    const taxPercent = parseNumber(item.taxPercent ?? 0);
-    if (taxPercent === null || taxPercent < 0 || taxPercent > 100) {
-      return { error: `Line item ${index + 1} tax percent must be between 0 and 100` };
+    let taxPercent = null;
+    if (item.taxPercent !== null && item.taxPercent !== undefined && item.taxPercent !== "") {
+      taxPercent = parseNumber(item.taxPercent);
+      if (taxPercent === null || taxPercent < 0 || taxPercent > 100) {
+        return { error: `Line item ${index + 1} tax percent must be between 0 and 100` };
+      }
     }
 
     const itemCustomFields =
@@ -533,6 +534,11 @@ export const createQuotation = async (req, res) => {
     );
     if (itemError) return res.status(400).json({ message: itemError });
 
+    const gstRegistered = (req.company || activeCompany)?.gstRegistered !== false;
+    if (!gstRegistered) {
+      for (const item of items) item.taxPercent = 0;
+    }
+
     const issueDate = values.issueDate ?? new Date();
     const validUntil = values.validUntil;
     if (!validUntil) return res.status(400).json({ message: "Valid-until date is required" });
@@ -689,6 +695,10 @@ export const updateQuotation = async (req, res) => {
       itemFieldDefs
     );
     if (itemError) return res.status(400).json({ message: itemError });
+    const gstRegistered = (req.company || activeCompany)?.gstRegistered !== false;
+    if (!gstRegistered) {
+      for (const item of items) item.taxPercent = 0;
+    }
     const totals = computeQuotationTotals(
       items,
       values.shippingCharges ?? quotation.shippingCharges ?? 0
@@ -1206,40 +1216,32 @@ export const convertQuotationToInvoice = async (req, res) => {
     });
   }
 
-  const taxRates = (quotation.lineItems || []).map((item) => Number(item.taxPercent || 0));
-  const uniqueRates = new Set(taxRates.map((rate) => rate.toFixed(4)));
-  if (uniqueRates.size > 1) {
-    return res.status(409).json({
-      message:
-        "This quotation mixes different tax rates across line items and cannot be converted automatically. Please create the invoice manually.",
-    });
-  }
-  const uniformTax = taxRates[0] || 0;
-
-  // Map items preserving line-item customFields
-  const invoiceItems = quotation.lineItems.map((item) => {
-    const qty = Number(item.quantity);
-    const base = safeMoney(qty * Number(item.unitPrice));
-    const taxable = safeMoney(base - Number(item.discountAmount || 0));
-    return {
-      description: item.description,
-      category: "other",
-      quantity: qty,
-      rate: taxable / qty,
-      customFields: item.customFields || {},
-    };
-  });
+  const invoiceItems = (quotation.lineItems || []).map((item) => ({
+    description: item.description,
+    category: item.category || "other",
+    quantity: Number(item.quantity),
+    rate: Number(item.unitPrice ?? item.rate ?? 0),
+    hsnSac: item.hsnSac || item.customFields?.hsnSac || item.customFields?.hsnCode || "",
+    taxPercent: Number(item.taxPercent ?? 0),
+    discountType: item.discountType || "none",
+    discountValue: Number(item.discountValue ?? 0),
+    customFields: item.customFields || {},
+  }));
 
   const shipping = Number(quotation.shippingCharges || 0);
-  if (shipping > 0) {
-    invoiceItems.push({
-      description: "Shipping / Handling charges",
-      category: "other",
-      quantity: 1,
-      rate: uniformTax > 0 ? shipping / (1 + uniformTax / 100) : shipping,
-      customFields: {},
-    });
-  }
+
+  const companyForTax = await resolveQuotationCompany(quotation, req);
+  const clientForTax = await Client.findOne({ _id: quotation.client, companyId });
+  const invoicePlaceOfSupply = resolvePlaceOfSupply({
+    company: companyForTax,
+    client: clientForTax,
+  });
+  const { items, subTotal, taxTotal, grandTotal, taxType, cgstAmount, sgstAmount, igstAmount } = computeTotals(
+    invoiceItems,
+    Number((quotation.lineItems || [])[0]?.taxPercent ?? 0),
+    shipping,
+    invoicePlaceOfSupply
+  );
 
   const notePrefix = `Converted from quotation ${quotation.quotationNumber}.`;
   const composedNotes = quotation.notes?.trim()
@@ -1254,7 +1256,12 @@ export const convertQuotationToInvoice = async (req, res) => {
     dueDate.setDate(dueDate.getDate() + 15);
 
     const invoiceNumber = await nextInvoiceNumber(invoiceDate, company);
-    const { items, subTotal, taxAmount, grandTotal } = computeTotals(invoiceItems, uniformTax);
+    const { items, subTotal, taxTotal, grandTotal, taxType, cgstAmount, sgstAmount, igstAmount } = computeTotals(
+      invoiceItems,
+      Number((quotation.lineItems || [])[0]?.taxPercent ?? 0),
+      shipping,
+      invoicePlaceOfSupply
+    );
 
     let invoiceTemplate = { templateId: null, templateSnapshot: null };
     if (company) {
@@ -1269,9 +1276,13 @@ export const convertQuotationToInvoice = async (req, res) => {
       dueDate,
       lineItems: items,
       subTotal,
-      taxPercent: uniformTax,
-      taxAmount,
+      taxPercent: Number((quotation.lineItems || [])[0]?.taxPercent ?? 0),
+      taxAmount: taxTotal,
       grandTotal,
+      taxType,
+      cgstAmount,
+      sgstAmount,
+      igstAmount,
       notes: composedNotes,
       status: "draft",
       customFields: quotation.customFields || {},

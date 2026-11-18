@@ -468,7 +468,7 @@ test("concurrent conversion requests create at most one invoice", async () => {
   assert.equal(String(quotation.convertedInvoice), String(invoices[0]._id));
 });
 
-test("only accepted quotations can convert and mixed tax rates are refused", async () => {
+test("converts a quotation that mixes different tax rates across line items", async () => {
   const draft = await post("/api/quotations", payload());
   const notAccepted = await post(`/api/quotations/${draft.body._id}/convert-to-invoice`);
   assert.equal(notAccepted.status, 409);
@@ -484,8 +484,34 @@ test("only accepted quotations can convert and mixed tax rates are refused", asy
   );
   await post(`/api/quotations/${mixed.body._id}/accept`);
   const res = await post(`/api/quotations/${mixed.body._id}/convert-to-invoice`);
-  assert.equal(res.status, 409);
-  assert.match(res.body.message, /different tax rates/i);
+  assert.equal(res.status, 201, JSON.stringify(res.body));
+
+  // Mixed rates are carried per line instead of being refused.
+  assert.equal(res.body.invoice.lineItems.length, 2);
+  assert.equal(res.body.invoice.lineItems[0].taxPercent, 18);
+  assert.equal(res.body.invoice.lineItems[1].taxPercent, 5);
+});
+
+test("converts a quotation with an exempt 0% line preserving the zero rate", async () => {
+  const exempt = await post(
+    "/api/quotations",
+    payload({
+      lineItems: [
+        { description: "Taxable", quantity: 1, unitPrice: 100, taxPercent: 18 },
+        { description: "Exempt", quantity: 1, unitPrice: 100, taxPercent: 0 },
+      ],
+    })
+  );
+  await post(`/api/quotations/${exempt.body._id}/accept`);
+  const res = await post(`/api/quotations/${exempt.body._id}/convert-to-invoice`);
+  assert.equal(res.status, 201, JSON.stringify(res.body));
+  assert.equal(res.body.invoice.lineItems.length, 2);
+  assert.equal(res.body.invoice.lineItems[0].taxPercent, 18);
+  assert.equal(res.body.invoice.lineItems[1].taxPercent, 0);
+  // Breakup keeps the exempt line at 0% (not the document rate).
+  const { computeGstBreakup } = await import("../templates/dynamicRenderer.js");
+  const { totalTax } = computeGstBreakup(res.body.invoice.lineItems, res.body.invoice);
+  assert.equal(totalTax, 18);
 });
 
 test("existing invoice creation and numbering remain intact", async () => {

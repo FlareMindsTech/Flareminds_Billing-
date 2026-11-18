@@ -29,6 +29,7 @@ let superToken;
 let tokenA;
 let tokenB;
 let companyA;
+let companyB;
 let clientA;
 let clientB;
 
@@ -37,6 +38,16 @@ const isoDay = (offset = 0) => {
   date.setDate(date.getDate() + offset);
   return date.toISOString().slice(0, 10);
 };
+
+const monthDayUTC = (offset = 0, day = 15) => {
+  const now = new Date();
+  return new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + offset, day, 12, 0, 0)
+  );
+};
+
+const monthKeyUTC = (date) =>
+  `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
 
 const auth = (token) => ({ Authorization: `Bearer ${token}` });
 
@@ -159,6 +170,7 @@ before(async () => {
     })
   )._id.toString();
   companyA = (meA.body.company?._id || meA.body._id).toString();
+  companyB = (meB.body.company?._id || meB.body._id).toString();
   clientB = (
     await Client.create({
       companyId: meB.body.company?._id || meB.body._id,
@@ -326,6 +338,12 @@ test("voiding a payment keeps the record and reverts invoice status", async () =
     method: "upi",
   });
   assert.equal(partial.status, 201, JSON.stringify(partial.body));
+
+  const shortReason = await request(app)
+    .post(`/api/invoices/${invoice._id}/payments/${partial.body._id}/void`)
+    .set(auth(tokenA))
+    .send({ voidReason: "  x " });
+  assert.equal(shortReason.status, 400, JSON.stringify(shortReason.body));
 
   const voided = await request(app)
     .post(`/api/invoices/${invoice._id}/payments/${partial.body._id}/void`)
@@ -530,3 +548,128 @@ test("legacy paid invoices without stored payment fields stay fully paid", async
   assert.equal(row.balanceDue, 0);
   assert.equal(row.status, "paid");
 });
+
+test("collection summary adds payments and legacy paid invoices to the trend", async () => {
+  const currentMonth = monthDayUTC(0);
+  const oneMonthAgo = monthDayUTC(-1);
+  const twoMonthsAgo = monthDayUTC(-2);
+  const threeMonthsAgo = monthDayUTC(-3);
+
+  // Fresh company, so the totals below are deterministic.
+  const invoice = await createInvoice({
+    token: tokenB,
+    client: clientB,
+    total: 1000,
+  });
+
+  const first = await recordPayment(tokenB, invoice._id, {
+    amount: 100,
+    method: "upi",
+    paidOn: twoMonthsAgo.toISOString(),
+  });
+  assert.equal(first.status, 201, JSON.stringify(first.body));
+
+  const second = await recordPayment(tokenB, invoice._id, {
+    amount: 50,
+    method: "upi",
+    paidOn: currentMonth.toISOString(),
+  });
+  assert.equal(second.status, 201, JSON.stringify(second.body));
+
+  const voided = await recordPayment(tokenB, invoice._id, {
+    amount: 25,
+    method: "cash",
+    paidOn: currentMonth.toISOString(),
+  });
+  assert.equal(voided.status, 201, JSON.stringify(voided.body));
+
+  const voidResponse = await request(app)
+    .post(`/api/invoices/${invoice._id}/payments/${voided.body._id}/void`)
+    .set(auth(tokenB))
+    .send({ voidReason: "Duplicate entry" });
+  assert.equal(voidResponse.status, 200, JSON.stringify(voidResponse.body));
+
+  const legacyBase = {
+    companyId: new mongoose.Types.ObjectId(companyB),
+    client: new mongoose.Types.ObjectId(clientB),
+    date: threeMonthsAgo,
+    dueDate: threeMonthsAgo,
+    lineItems: [
+      {
+        description: "Legacy collected work",
+        category: "other",
+        quantity: 1,
+        rate: 1,
+        amount: 1,
+        customFields: {},
+      },
+    ],
+    subTotal: 1,
+    taxPercent: 0,
+    taxAmount: 0,
+    status: "paid",
+    notes: "",
+    customFields: {},
+    createdAt: threeMonthsAgo,
+  };
+
+  // No amountPaid / balanceDue and no Payment record: the invoice's stored
+  // updatedAt is the only paid-date hint.
+  await Invoice.collection.insertOne({
+    ...legacyBase,
+    _id: new mongoose.Types.ObjectId(),
+    invoiceNumber: "PAYBETA-INV-LEGACY-0001",
+    grandTotal: 500,
+    lineItems: [{ ...legacyBase.lineItems[0], rate: 500, amount: 500 }],
+    subTotal: 500,
+    updatedAt: threeMonthsAgo,
+  });
+
+  // A stored paid date wins over updatedAt.
+  await Invoice.collection.insertOne({
+    ...legacyBase,
+    _id: new mongoose.Types.ObjectId(),
+    invoiceNumber: "PAYBETA-INV-LEGACY-0002",
+    grandTotal: 300,
+    lineItems: [{ ...legacyBase.lineItems[0], rate: 300, amount: 300 }],
+    subTotal: 300,
+    paidAt: oneMonthAgo,
+    updatedAt: threeMonthsAgo,
+  });
+
+  const summary = await request(app)
+    .get("/api/invoices/collection-summary")
+    .set(auth(tokenB));
+  assert.equal(summary.status, 200, JSON.stringify(summary.body));
+
+  // 100 + 50 from payments (the voided 25 is excluded) + 500 + 300 legacy.
+  assert.equal(summary.body.collected, 950);
+  assert.equal(summary.body.months.length, 6);
+
+  const byMonth = Object.fromEntries(
+    summary.body.months.map((month) => [month.month, month.total])
+  );
+  assert.equal(byMonth[monthKeyUTC(currentMonth)], 50);
+  assert.equal(byMonth[monthKeyUTC(oneMonthAgo)], 300);
+  assert.equal(byMonth[monthKeyUTC(twoMonthsAgo)], 100);
+  assert.equal(byMonth[monthKeyUTC(threeMonthsAgo)], 500);
+
+  const trendTotal = summary.body.months.reduce(
+    (sum, month) => sum + month.total,
+    0
+  );
+  assert.equal(trendTotal, 950);
+  assert.equal(
+    summary.body.months.filter((month) => month.total === 0).length,
+    2
+  );
+  assert.ok(summary.body.months.every((month) => month.label && month.fullLabel));
+
+  // The second company's history must not leak into another tenant.
+  const wrongTenant = await request(app)
+    .get("/api/invoices/collection-summary")
+    .set(auth(tokenA));
+  assert.equal(wrongTenant.status, 200);
+  assert.notEqual(wrongTenant.body.collected, 950);
+});
+

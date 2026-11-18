@@ -677,7 +677,7 @@ async function seedInvoices(company, clients, seeds) {
     const client = clients[seed.clientIndex];
     const date = addDays(new Date(), -seed.daysAgo);
     const dueDate = addDays(date, seed.dueInDays);
-    const { items, subTotal, taxAmount, grandTotal } = computeTotals(
+    const { items, subTotal, taxTotal, grandTotal } = computeTotals(
       seed.items,
       seed.taxPercent
     );
@@ -704,7 +704,7 @@ async function seedInvoices(company, clients, seeds) {
       lineItems: items,
       subTotal,
       taxPercent: seed.taxPercent,
-      taxAmount,
+      taxAmount: taxTotal,
       grandTotal,
       notes: seed.notes,
       customFields: seed.customFields || {},

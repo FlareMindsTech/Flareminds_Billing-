@@ -93,6 +93,11 @@ const companySchema = new mongoose.Schema(
     website: { type: String, trim: true, default: "", maxlength: 300 },
     gstn: { type: String, trim: true, default: "", maxlength: 50 },
 
+    // GST location: state name plus its 2-digit code (derived from the valid
+    // GSTIN when present, otherwise kept from the saved state).
+    state: { type: String, trim: true, default: "" },
+    stateCode: { type: String, trim: true, uppercase: true, default: "" },
+
     logoIconUrl: { type: String, trim: true, default: "", maxlength: 500000 },
     logoTextUrl: { type: String, trim: true, default: "", maxlength: 500000 },
 
@@ -114,6 +119,9 @@ const companySchema = new mongoose.Schema(
     },
     currency: { type: String, trim: true, uppercase: true, default: "INR", maxlength: 8 },
     defaultTaxPercent: { type: Number, default: 0, min: 0, max: 100 },
+    defaultHsnSac: { type: String, trim: true, default: "" },
+    taxRates: { type: [Number], default: () => [0, 5, 12, 18, 28] },
+    gstRegistered: { type: Boolean, default: true },
 
     defaultInvoiceNotes: { type: String, default: "", maxlength: 3000 },
     defaultQuotationNotes: { type: String, default: "", maxlength: 3000 },

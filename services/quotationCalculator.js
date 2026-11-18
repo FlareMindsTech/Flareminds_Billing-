@@ -40,7 +40,7 @@ export function computeQuotationTotals(items, shippingCharges = 0) {
     }
 
     const taxable = roundMoney(base - discountAmount);
-    const taxAmount = roundMoney((taxable * Number(item.taxPercent)) / 100);
+    const taxAmount = roundMoney((taxable * Number(item.taxPercent ?? 0)) / 100);
     const lineTotal = roundMoney(taxable + taxAmount);
 
     subTotal = roundMoney(subTotal + base);

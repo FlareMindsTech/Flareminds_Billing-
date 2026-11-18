@@ -6,6 +6,8 @@ import Quotation from "../models/Quotation.js";
 import { audit } from "../utils/auditLog.js";
 import { ensureDefaultTemplates } from "../services/templateService.js";
 import { isValidEmail } from "../utils/validation.js";
+import { stateCodeForName } from "../utils/indianStates.js";
+import { resolveStateCode, normalizeGstin } from "../utils/gst.js";
 
 const COMPANY_FIELDS = [
   "name",
@@ -16,12 +18,18 @@ const COMPANY_FIELDS = [
   "email",
   "website",
   "gstn",
+  "state",
+  "stateCode",
+  "defaultHsnSac",
   "logoIconUrl",
   "logoTextUrl",
   "invoicePrefix",
   "quotationPrefix",
   "currency",
   "defaultTaxPercent",
+  "defaultHsnSac",
+  "taxRates",
+  "gstRegistered",
   "defaultInvoiceNotes",
   "defaultQuotationNotes",
   "defaultTermsAndConditions",
@@ -43,6 +51,9 @@ const TEXT_FIELDS = [
   "email",
   "website",
   "gstn",
+  "state",
+  "stateCode",
+  "defaultHsnSac",
   "logoIconUrl",
   "logoTextUrl",
   "defaultInvoiceNotes",
@@ -211,6 +222,54 @@ export function validateCompany(data, { creating = false } = {}) {
     data.defaultTaxPercent = tax;
   }
 
+  if (data.state !== undefined || data.stateCode !== undefined) {
+    const state = (data.state ?? "").trim();
+    const code = (data.stateCode ?? "").trim().toUpperCase();
+    if (code && !/^[0-9]{2}$/.test(code)) {
+      return "GST state code must be 2 digits.";
+    }
+    if (state && code) {
+      const expected = stateCodeForName(state);
+      if (expected && expected !== code) {
+        return "State and GST state code do not match.";
+      }
+    }
+    if (state && !code) {
+      const expected = stateCodeForName(state);
+      if (expected) data.stateCode = expected;
+    }
+  }
+
+  if (data.gstn !== undefined && !data.stateCode) {
+    const normalized = normalizeGstin(data.gstn);
+    if (normalized) {
+      const derived = resolveStateCode({ gstn: normalized });
+      if (derived) data.stateCode = derived;
+    }
+  }
+
+  if (data.taxRates !== undefined) {
+    if (!Array.isArray(data.taxRates)) {
+      return "Tax rates must be a list.";
+    }
+    const normalized = [];
+    const seen = new Set();
+    for (const raw of data.taxRates) {
+      const rate = Number(raw);
+      if (!Number.isFinite(rate) || rate < 0 || rate > 100) {
+        return "Each tax rate must be between 0 and 100.";
+      }
+      if (seen.has(rate)) continue;
+      seen.add(rate);
+      normalized.push(rate);
+    }
+    data.taxRates = normalized.sort((a, b) => a - b);
+  }
+
+  if (data.gstRegistered !== undefined && typeof data.gstRegistered !== "boolean") {
+    return "GST registered must be a boolean.";
+  }
+
   if (data.email !== undefined && data.email !== "" && !isValidEmail(data.email)) {
     return "Enter a valid company email address.";
   }
@@ -246,7 +305,7 @@ export function validateCompany(data, { creating = false } = {}) {
     if (itemFieldsErr) return itemFieldsErr;
   }
 
-  for (const field of ["isActive", "isDefault"]) {
+  for (const field of ["isActive", "isDefault", "gstRegistered"]) {
     if (data[field] !== undefined && typeof data[field] !== "boolean") {
       return `${field} must be a boolean.`;
     }
@@ -507,12 +566,18 @@ const TENANT_EDITABLE_FIELDS = new Set([
   "email",
   "website",
   "gstn",
+  "state",
+  "stateCode",
+  "defaultHsnSac",
   "logoIconUrl",
   "logoTextUrl",
   "invoicePrefix",
   "quotationPrefix",
   "currency",
   "defaultTaxPercent",
+  "defaultHsnSac",
+  "taxRates",
+  "gstRegistered",
   "defaultInvoiceNotes",
   "defaultQuotationNotes",
   "defaultTermsAndConditions",

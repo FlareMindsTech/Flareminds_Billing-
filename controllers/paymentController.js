@@ -8,6 +8,10 @@ import {
   roundMoney,
   withEffectivePaymentFields,
 } from "../utils/invoicePayments.js";
+import {
+  buildMonthBuckets,
+  summarizeCollections,
+} from "../utils/collectionSummary.js";
 import { audit } from "../utils/auditLog.js";
 
 const isBadId = (id) => !mongoose.isValidObjectId(id);
@@ -238,6 +242,12 @@ export const voidInvoicePayment = async (req, res) => {
   if (!invoice) return res.status(404).json({ message: "Invoice not found" });
 
   const reason = text(req.body?.voidReason, 500);
+  if (reason.length < 3) {
+    return res
+      .status(400)
+      .json({ message: "Void reason must be at least 3 characters" });
+  }
+
   const payment = await Payment.findOneAndUpdate(
     {
       _id: req.params.paymentId,
@@ -298,4 +308,41 @@ export const voidInvoicePayment = async (req, res) => {
   }
 
   res.json(paymentPayload(payment, recomputed.invoice));
+};
+
+// Dashboard totals: all money collected from non-voided payments, plus legacy
+// paid invoices that never got Payment records. The monthly series is
+// zero-filled for the last six months so the chart always has an axis.
+export const getCollectionSummary = async (req, res) => {
+  const companyId = tenantId(req);
+  if (!companyId) {
+    return res.status(409).json({ message: "No active company is configured" });
+  }
+
+  const now = new Date();
+  const buckets = buildMonthBuckets(now);
+  const from = buckets[0].start;
+  const to = buckets[buckets.length - 1].end;
+
+  const [payments, paidInvoices, paymentInvoiceIds] = await Promise.all([
+    Payment.find({ companyId, voided: false })
+      .select("amount paidOn createdAt")
+      .lean(),
+    Invoice.find({ companyId, status: "paid" }).lean(),
+    Payment.distinct("invoiceId", { companyId }),
+  ]);
+
+  const invoicesWithPayments = new Set(
+    paymentInvoiceIds.map((invoiceId) => String(invoiceId))
+  );
+  const legacyInvoices = paidInvoices.filter(
+    (invoice) => !invoicesWithPayments.has(String(invoice._id))
+  );
+
+  const summary = summarizeCollections({ payments, legacyInvoices, now });
+
+  res.json({
+    ...summary,
+    range: { from: from.toISOString(), to: to.toISOString() },
+  });
 };
