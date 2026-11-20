@@ -1,5 +1,10 @@
 import "dotenv/config";
 
+if (process.env.NODE_ENV === "production") {
+  console.error("Refusing to run seedDemo.js in production.");
+  process.exit(1);
+}
+
 import mongoose from "mongoose";
 
 import { connectDB } from "../config/db.js";

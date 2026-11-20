@@ -136,12 +136,14 @@ const formatDate = (value) => {
 const currencyCode = (doc, company) =>
   String(doc.currency || company.currency || "INR").toUpperCase();
 
-const money = (value, currency) => {
+export const money = (value, currency) => {
   const symbol = CURRENCY_SYMBOLS[currency] || `${currency} `;
-  return `${symbol}${Number(value || 0).toLocaleString("en-IN", {
+  const num = Number(value || 0);
+  const formatted = Math.abs(num).toLocaleString("en-IN", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
-  })}`;
+  });
+  return `${num < 0 ? "-" : ""}${symbol}${formatted}`;
 };
 
 const yesNo = (value) => {
@@ -247,7 +249,7 @@ export function computeGstBreakup(items = [], doc = {}) {
   for (const item of items) {
     const qty = Number(item.quantity ?? 1);
     const rate = Number(item.rate ?? item.unitPrice ?? 0);
-    const baseAmount = Number(item.amount ?? item.lineTotal ?? qty * rate);
+    const baseAmount = Number(item.amount ?? item.taxableAmount ?? item.base ?? qty * (item.rate ?? item.unitPrice ?? 0));
     const discountAmount = Number(item.discountAmount ?? 0);
     const taxableValue = Number((baseAmount - discountAmount).toFixed(2));
     const rawLineRate = item.taxPercent ?? item.taxRate;
@@ -348,6 +350,79 @@ export function computeGstBreakup(items = [], doc = {}) {
   };
 }
 
+function renderGstBreakupBlock(items = [], doc = {}, currency = "INR") {
+  const showGstBreakup = doc?.showGstBreakup !== false;
+  // Default to showing GST breakup for generated documents unless explicitly disabled.
+  const enabled = showGstBreakup !== false;
+  if (!enabled) return "";
+
+  const { breakup, totalTaxable, totalCgst, totalSgst, totalIgst, totalTax, taxType } =
+    computeGstBreakup(items, doc);
+  const isInterState = String(taxType || "").toLowerCase() === TAX_TYPE_IGST;
+  const gstCell = (value) =>
+    Number(value || 0).toLocaleString("en-IN", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+
+  const gstRows = breakup
+    .map((grp) => {
+      const value = gstCell(grp.taxableValue);
+      const tax = gstCell(grp.totalTax);
+      return isInterState
+        ? `<tr>
+            <td class="num">${value}</td>
+            <td class="center">${grp.igstRate}%</td>
+            <td class="num">${gstCell(grp.igstAmount)}</td>
+            <td class="num">${tax}</td>
+          </tr>`
+        : `<tr>
+            <td class="num">${value}</td>
+            <td class="center">${grp.cgstRate}%</td>
+            <td class="num">${gstCell(grp.cgstAmount)}</td>
+            <td class="center">${grp.sgstRate}%</td>
+            <td class="num">${gstCell(grp.sgstAmount)}</td>
+            <td class="num">${tax}</td>
+          </tr>`;
+    })
+    .join("");
+
+  if (!breakup.length) return "";
+
+  return `<table class="gst-breakup-table" style="width:100%;border-collapse:collapse;">
+    <thead>
+      <tr>
+        <th rowspan="2" style="width:24%;">Taxable Value</th>
+        ${
+          isInterState
+            ? `<th colspan="2">IGST</th>`
+            : `<th colspan="2">CGST</th><th colspan="2">SGST/UTGST</th>`
+        }
+        <th rowspan="2" style="width:20%;">Total Tax Amount</th>
+      </tr>
+      <tr>
+        ${
+          isInterState
+            ? `<th style="width:12%;">Rate</th><th style="width:16%;">Amount</th>`
+            : `<th style="width:12%;">Rate</th><th style="width:16%;">Amount</th><th style="width:12%;">Rate</th><th style="width:16%;">Amount</th>`
+        }
+      </tr>
+    </thead>
+    <tbody>
+      ${gstRows}
+      <tr class="total-row-highlight">
+        <td class="num"><strong>Total: ${gstCell(totalTaxable)}</strong></td>
+        ${
+          isInterState
+            ? `<td></td><td class="num"><strong>${gstCell(totalIgst || totalTax)}</strong></td>`
+            : `<td></td><td class="num"><strong>${gstCell(totalCgst)}</strong></td><td></td><td class="num"><strong>${gstCell(totalSgst)}</strong></td>`
+        }
+        <td class="num"><strong>${gstCell(totalTax)}</strong></td>
+      </tr>
+    </tbody>
+  </table>`;
+}
+
 function sectionList(template) {
   const sections = Array.isArray(template.sections) && template.sections.length
     ? template.sections
@@ -421,7 +496,7 @@ function renderLogo(company, layout) {
   const initials = escapeHtml((company.code || company.name || "CO").slice(0, 3).toUpperCase());
 
   const mark = icon
-    ? `<img src="${icon}" alt="logo" class="logo-icon" />`
+    ? `<div class="logo-img-wrap"><img src="${icon}" alt="logo" class="logo-icon" onerror="this.style.display='none';const fb=this.parentElement.querySelector('.logo-fallback');if(fb)fb.style.display='flex';" /><div class="logo-fallback" style="display:none">${initials}</div></div>`
     : `<div class="logo-fallback">${initials}</div>`;
 
   return `
@@ -499,7 +574,6 @@ function renderClient({ client, labels }) {
       ${client.company ? `<div>${escapeHtml(client.company)}</div>` : ""}
       ${address ? `<div class="client-address">${address}</div>` : ""}
       ${contact ? `<div class="client-contact">${contact}</div>` : ""}
-      <div class="client-contact">${escapeHtml(client.whatsapp || "")}</div>
     </section>`;
 }
 
@@ -608,7 +682,7 @@ function renderTotals({ doc, docType, labels, currency, template }) {
     docType === "invoice" && template?.content?.showPaymentSummary !== false;
   const rows = [
     [labels.subTotalLabel || "Sub Total", doc.subTotal || 0],
-    ...(isQuotation && Number(doc.discountTotal || 0) > 0
+    ...(Number(doc.discountTotal || 0) > 0
       ? [[labels.itemDiscountLabel || "Discount", -Number(doc.discountTotal || 0)]]
       : []),
     ...(isQuotation
@@ -841,18 +915,18 @@ const PRESET_CSS = {
     .tax-payment-summary span:first-child strong { color: #047857; }
     .tax-payment-summary span:last-child strong { color: #b91c1c; }
     .gst-breakup-table {
-      width: 100%; border-collapse: collapse; border: 1.5px solid #000;
-      border-top: none;
+      width: 100%; border-collapse: collapse; border: 1px solid #d1d5db;
     }
     .gst-breakup-table th {
-      background: var(--accent, #00875a); color: #ffffff; border: 1px solid #000;
+      background: #f3f4f6; color: #1e293b; border: 1px solid #d1d5db;
       font-size: 0.72em; text-align: center; padding: 4px 3px; font-weight: 700;
     }
     .gst-breakup-table td {
-      border: 1px solid #000; padding: 4px 6px; font-size: 0.78em;
+      border: 1px solid #d1d5db; padding: 4px 6px; font-size: 0.78em;
     }
     .gst-breakup-table .num { text-align: right; white-space: nowrap; }
     .gst-breakup-table .center { text-align: center; }
+    .gst-breakup-table .total-row-highlight td { font-weight: 700; background: #f3f4f6; }
     .tax-bank-sign-grid {
       display: grid; grid-template-columns: 1.3fr 1fr; border: 1.5px solid #000;
       border-top: none; margin-bottom: 6px;
@@ -1097,7 +1171,10 @@ function renderTaxInvoiceDocument({ docType, doc, client, company, template, cur
   const itemRows = items.map((item, idx) => {
     const qty = Number(item.quantity ?? 1);
     const unitPrice = Number(item.rate ?? item.unitPrice ?? 0);
-    const amount = Number(item.amount ?? item.lineTotal ?? qty * unitPrice);
+    const amount = Number(item.amount ?? qty * unitPrice ?? item.rate ?? 0);
+    const taxableValue = Number(
+      item.taxableAmount ?? item.taxableValue ?? amount
+    );
     const rawLineRate = item.taxPercent ?? item.taxRate;
     const docRate = Number(doc.taxPercent ?? 0);
     let taxRate;
@@ -1118,11 +1195,13 @@ function renderTaxInvoiceDocument({ docType, doc, client, company, template, cur
       taxRate = Number(rawLineRate);
     }
     const taxAmount = Number(
-      item.taxAmount ?? Math.round(amount * (taxRate / 100) * 100) / 100
+      item.taxAmount ?? Math.round(taxableValue * (taxRate / 100) * 100) / 100
     );
-    const lineTotal = amount + taxAmount;
+    const lineTotal = Number(
+      item.lineTotal ?? taxableValue + taxAmount
+    );
 
-    subtotal += amount;
+    subtotal += taxableValue;
     totalGst += taxAmount;
     grandTotal += lineTotal;
 
@@ -1143,15 +1222,15 @@ function renderTaxInvoiceDocument({ docType, doc, client, company, template, cur
         </td>
         <td class="center">${escapeHtml(hsn)}</td>
         <td class="center">${qty} ${escapeHtml(unit)}</td>
-        <td class="num">${Number(amount).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+        <td class="num">${money(taxableValue, currency)}</td>
         <td class="center">${taxRate}%</td>
-        <td class="num">${Number(taxAmount).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-        <td class="num">${Number(lineTotal).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+        <td class="num">${money(taxAmount, currency)}</td>
+        <td class="num">${money(lineTotal, currency)}</td>
       </tr>`;
   }).join("");
 
   const effectiveGrandTotal = Number(doc.grandTotal ?? grandTotal);
-  const effectiveSubtotal = Number(doc.subTotal ?? subtotal);
+  const effectiveSubtotal = subtotal > 0 ? subtotal : Number(doc.subTotal ?? 0);
   const effectiveTotalTax = Number(doc.taxTotal ?? doc.taxAmount ?? totalGst);
 
   const { breakup, totalTaxable, totalCgst, totalSgst, totalIgst, totalTax, taxType } = computeGstBreakup(items, doc);
@@ -1187,11 +1266,12 @@ function renderTaxInvoiceDocument({ docType, doc, client, company, template, cur
 
   const bank = plain(company.bank) || {};
   const bankLines = [
-    bank.accountNumber ? `Account No: ${escapeHtml(bank.accountNumber)}` : "",
-    bankDisplayName(bank) ? escapeHtml(bankDisplayName(bank)) : "",
-    bank.branch ? escapeHtml(bank.branch) : "",
+    bankDisplayName(bank) ? `Bank Name: ${escapeHtml(bankDisplayName(bank))}` : "",
+    bank.accountName ? `Account Holder: ${escapeHtml(bank.accountName)}` : "",
+    bank.accountNumber ? `Account Number: ${escapeHtml(bank.accountNumber)}` : "",
     bank.ifsc ? `IFSC Code: ${escapeHtml(bank.ifsc)}` : "",
-    bank.upi ? `GPay/UPI: ${escapeHtml(bank.upi)}` : "",
+    bank.branch ? `Branch: ${escapeHtml(bank.branch)}` : "",
+    bank.upi ? `UPI: ${escapeHtml(bank.upi)}` : "",
   ].filter(Boolean);
   const contactLines = [
     company.phone ? `Phone: ${company.phone}` : "",
@@ -1208,13 +1288,13 @@ function renderTaxInvoiceDocument({ docType, doc, client, company, template, cur
 
   const paymentSummaryRow = showPaymentSummary
     ? `<div class="tax-payment-summary">
-        <span>Paid: <strong>${Number(doc.amountPaid || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></span>
-        <span>Balance Due: <strong>${Number(doc.balanceDue || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></span>
+        <span>Paid: <strong>${money(doc.amountPaid || 0, currency)}</strong></span>
+        <span>Balance Due: <strong>${money(doc.balanceDue || 0, currency)}</strong></span>
       </div>`
     : "";
 
   const gstBlock = showGstBreakup
-    ? `<table class="gst-breakup-table">
+    ? `<table class="gst-breakup-table" style="width:100%;border-collapse:collapse;">
       <thead>
         <tr>
           <th rowspan="2" style="width:24%;">Taxable Value</th>
@@ -1280,6 +1360,7 @@ function renderTaxInvoiceDocument({ docType, doc, client, company, template, cur
         <div class="brand-text">
           <div class="company-name">${escapeHtml(company.name || "Company")}</div>
           ${company.tagline ? `<div class="company-tagline">${escapeHtml(company.tagline)}</div>` : ""}
+          ${company.address ? `<div class="company-address">${escapeHtml(company.address).replace(/\n/g, "<br/>")}</div>` : ""}
         </div>
       </div>
       <div class="header-contact-block">
@@ -1338,10 +1419,10 @@ function renderTaxInvoiceDocument({ docType, doc, client, company, template, cur
         ${itemRows}
         <tr class="total-row-highlight">
           <td colspan="4" class="total-label"><strong>Total Amount (Including GST)</strong></td>
-          <td class="num"><strong>${Number(effectiveSubtotal).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></td>
+          <td class="num"><strong>${money(effectiveSubtotal, currency)}</strong></td>
           <td></td>
-          <td class="num"><strong>${Number(effectiveTotalTax).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></td>
-          <td class="num"><strong>${Number(effectiveGrandTotal).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></td>
+          <td class="num"><strong>${money(effectiveTotalTax, currency)}</strong></td>
+          <td class="num"><strong>${money(effectiveGrandTotal, currency)}</strong></td>
         </tr>
       </tbody>
     </table>
@@ -1372,15 +1453,11 @@ function renderQuotationProposalDocument({ docType, doc, client, company, templa
     content?.subject ||
     doc.customFields?.projectScope ||
     doc.subject ||
-    "3KW Solar On-Grid System for Domestic";
+    "";
 
   const scopeOfWork = content ? content.scopeOfWork || [] : LEGACY_SCOPE_OF_WORK;
   const processSteps = content ? content.processSteps || [] : LEGACY_PROCESS_STEPS;
-  const legacyMilestones = [
-    { label: "80% Advance Payment", percentage: 80, description: "To be paid before the commencement of the project." },
-    { label: "15% After the Installation of Work", percentage: 15, description: "Released after the full completion of the installation work, excluding the net metering process." },
-    { label: "05% After Commissioning of the Net Meter", percentage: 5, description: "Kindly release the amount after the completion of the net meter commissioning process." },
-  ];
+  const legacyMilestones = [];
   const milestones =
     content && Array.isArray(content.paymentMilestones) && content.paymentMilestones.length
       ? content.paymentMilestones
@@ -1390,7 +1467,9 @@ function renderQuotationProposalDocument({ docType, doc, client, company, templa
   const purposes =
     content && String(content.purposeText || "").trim()
       ? content.purposeText
-      : `Please find here below our best proposal for ${subject}.`;
+      : subject
+      ? `Please find here below our best proposal for ${subject}.`
+      : "Please find here below our best proposal.";
   const closingText =
     content && String(content.closingText || "").trim()
       ? content.closingText
@@ -1459,7 +1538,7 @@ function renderQuotationProposalDocument({ docType, doc, client, company, templa
     doc.customFields?.subsidyNote ||
     doc.notes ||
     content?.noticeText ||
-    "For a 3KW solar system, the Central Government subsidy is ₹78,000/- and the Tamil Nadu Government subsidy is ₹22,000/- (Subject for availability), making the total subsidy amount ₹1,00,000/-. The subsidy amount will be credited directly to the customer’s bank account.";
+    "";
 
   return `
     <div class="proposal-doc">
@@ -1489,7 +1568,7 @@ function renderQuotationProposalDocument({ docType, doc, client, company, templa
           <div class="proposal-meta-col">
             <div class="proposal-title-bar">${escapeHtml(title)}</div>
             <div class="proposal-meta-rows">
-              <div><strong>Quotation No:</strong> ${escapeHtml(docNumber)}</div>
+              <div><strong>Quotation No:</strong> <span style="white-space:nowrap;">${escapeHtml(docNumber)}</span></div>
               <div><strong>Date:</strong> ${formatDate(docDate)}</div>
             </div>
           </div>
@@ -1840,6 +1919,7 @@ function renderCorporateInvoiceDocument({
         </div>
         <div class="corp-totals">
           <div class="corp-total-row"><span>Sub Total</span><strong>${money(effectiveSub, currency)}</strong></div>
+          ${Number(doc.discountTotal || 0) > 0 ? `<div class="corp-total-row"><span>Discount</span><strong>${money(-Number(doc.discountTotal || 0), currency)}</strong></div>` : ""}
           <div class="corp-total-row"><span>Tax</span><strong>${money(effectiveTax, currency)}</strong></div>
           <div class="corp-total-row corp-grand"><span>${escapeHtml(labels.grandTotalLabel || "Grand Total")}</span><strong>${money(effectiveGrand, currency)}</strong></div>
           ${
@@ -2043,6 +2123,7 @@ export function renderDynamicDocumentHTML({ docType, doc, client, company, templ
   const items = Array.isArray(safeDoc.lineItems) ? safeDoc.lineItems : [];
   const snapshot = safeDoc.clientSnapshot || {};
   const clientData = { ...plain(client), ...snapshot };
+  const showAmountInWords = safeTemplate?.content?.showAmountInWords !== false;
   const sections = sectionList(safeTemplate);
   const preserved = new Set(sections.map((section) => section.key));
 
@@ -2051,7 +2132,9 @@ export function renderDynamicDocumentHTML({ docType, doc, client, company, templ
     meta: () => renderMeta({ doc: safeDoc, docType, labels }),
     client: () => renderClient({ client: clientData, labels }),
     items: () => renderItems({ items, docType, template: safeTemplate, labels, currency, doc: safeDoc }),
-    totals: () => renderTotals({ doc: safeDoc, docType, labels, currency, template: safeTemplate }),
+    totals: () => renderTotals({ doc: safeDoc, docType, labels, currency, template: safeTemplate }) +
+      renderGstBreakupBlock(items, safeDoc, currency) +
+      (showAmountInWords ? `<div class="tax-words-row"><strong>Amount in words:</strong> ${amountInWords(Number(safeDoc.grandTotal || safeDoc.subTotal || 0), currency)}</div>` : ""),
     bank: () => renderBank({ company: safeCompany }),
     notes: () => renderNotes({ doc: safeDoc, labels }),
     terms: () => renderTerms({ doc: safeDoc, docType, labels }),
@@ -2064,9 +2147,9 @@ export function renderDynamicDocumentHTML({ docType, doc, client, company, templ
   const orientation = layout.orientation === "landscape" ? "landscape" : "portrait";
   const margins = layout.margins || {};
   const pad = (value, fallback) => (Number.isFinite(Number(value)) ? Number(value) : fallback);
-  const padTop = pad(margins.top, 14);
+  const padTop = pad(margins.top, 12);
   const padRight = pad(margins.right, 14);
-  const padBottom = pad(margins.bottom, 14);
+  const padBottom = pad(margins.bottom, 12);
   const padLeft = pad(margins.left, 14);
   const presetCss = PRESET_CSS[layout.preset] || PRESET_CSS.classic;
   const watermark = layout.watermarkText
@@ -2177,15 +2260,16 @@ export function renderDynamicDocumentHTML({ docType, doc, client, company, templ
   }
   .doc-header {
     display: flex; justify-content: space-between; align-items: flex-start;
-    gap: 18px; margin-bottom: 18px;
+    gap: 18px; margin-bottom: 12px;
   }
   .doc-header.logo-center { flex-direction: column; align-items: center; text-align: center; }
   .doc-header.logo-right { flex-direction: row-reverse; text-align: right; }
   .brand { display: flex; gap: 14px; align-items: flex-start; }
   .logo-center .brand, .logo-right .brand { justify-content: center; }
   .brand-mark { display: flex; flex-direction: column; gap: 6px; align-items: center; }
-  .logo-icon { width: 54px; height: 54px; object-fit: contain; }
-  .logo-text { max-height: 40px; max-width: 190px; object-fit: contain; }
+  .logo-icon { width: 72px; height: 72px; object-fit: contain; }
+  .logo-img-wrap { width: 72px; height: 72px; display: flex; align-items: center; justify-content: center; }
+  .logo-text { max-height: 56px; max-width: 220px; object-fit: contain; }
   .logo-fallback {
     width: 54px; height: 54px; border-radius: 12px; background: var(--accent);
     color: #fff; display: flex; align-items: center; justify-content: center;
@@ -2201,9 +2285,11 @@ export function renderDynamicDocumentHTML({ docType, doc, client, company, templ
     letter-spacing: 0.08em; color: var(--accent);
   }
   .meta-grid {
-    display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 8px; background: #f8fafc; padding: 12px; border-radius: 8px; margin-bottom: 16px;
+    display: grid; grid-template-columns: 1.8fr 1fr 1fr 0.8fr;
+    gap: 8px; background: #f8fafc; padding: 10px; border-radius: 8px; margin-bottom: 12px;
   }
+  .meta-grid .meta-item:first-child { min-width: 180px; }
+  .meta-grid .meta-value { white-space: nowrap; }
   .meta-label, .section-label {
     font-size: 0.72em; text-transform: uppercase; letter-spacing: 0.06em;
     color: #64748b; font-weight: 700; margin-bottom: 3px;
@@ -2211,7 +2297,7 @@ export function renderDynamicDocumentHTML({ docType, doc, client, company, templ
   .meta-value { font-weight: 600; }
   .client-block, .bank-block, .notes-section, .terms-section {
     background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px;
-    padding: 12px; margin-bottom: 14px;
+    padding: 10px; margin-bottom: 10px;
   }
   .client-name { font-weight: 700; font-size: 1.05em; color: var(--secondary); }
   .client-address, .client-contact { color: #475569; font-size: 0.9em; }
@@ -2233,13 +2319,13 @@ export function renderDynamicDocumentHTML({ docType, doc, client, company, templ
   }
   .field-item .meta-label { margin-bottom: 2px; }
   .field-val { font-weight: 600; font-size: 0.92em; color: var(--secondary); word-break: break-word; }
-  .items-section { margin-bottom: 16px; }
+  .items-section { margin-bottom: 12px; }
   .items-table { width: 100%; border-collapse: collapse; }
   .items-table th {
-    text-align: left; padding: 8px; font-size: 0.78em; text-transform: uppercase;
+    text-align: left; padding: 6px; font-size: 0.78em; text-transform: uppercase;
     letter-spacing: 0.04em;
   }
-  .items-table td { padding: 8px; vertical-align: top; font-size: 0.92em; }
+  .items-table td { padding: 6px; vertical-align: top; font-size: 0.92em; }
   .items-table .num { text-align: right; white-space: nowrap; }
   .items-table .col-index { width: 28px; text-align: center; }
   .col-description { min-width: 34%; }
@@ -2257,7 +2343,7 @@ export function renderDynamicDocumentHTML({ docType, doc, client, company, templ
     margin-right: 4px;
   }
   .item-sub span { color: #64748b; font-weight: 600; }
-  .totals-wrap { display: flex; justify-content: flex-end; margin-bottom: 16px; }
+  .totals-wrap { display: flex; justify-content: flex-end; margin-bottom: 12px; }
   .totals { min-width: 260px; }
   .total-row {
     display: flex; justify-content: space-between; gap: 20px;
@@ -2273,7 +2359,10 @@ export function renderDynamicDocumentHTML({ docType, doc, client, company, templ
   .bank-row span { min-width: 110px; color: #64748b; }
   .condition-block { margin-bottom: 10px; }
   .condition-block p, .notes-section p { margin: 0; font-size: 0.9em; color: #334155; white-space: pre-wrap; }
-  .signature-section { display: flex; justify-content: space-between; gap: 40px; margin: 28px 0 16px; }
+  .signature-section { display: flex; justify-content: space-between; gap: 40px; margin: 8px 0 4px; break-inside: avoid; page-break-inside: avoid; }
+  .terms-section { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 10px; }
+  .notes-section { padding: 10px; margin-bottom: 10px; }
+  .condition-block { margin-bottom: 6px; font-size: 0.85em; }
   .signature-box { min-width: 190px; font-size: 0.88em; }
   .signature-line { border-top: 1px solid #94a3b8; margin-bottom: 5px; }
   .muted { color: #64748b; font-size: 0.9em; }
@@ -2281,6 +2370,19 @@ export function renderDynamicDocumentHTML({ docType, doc, client, company, templ
     margin-top: 18px; padding-top: 8px; border-top: 1px solid #e2e8f0;
     display: flex; justify-content: space-between; color: #64748b; font-size: 0.78em;
   }
+  .gst-breakup-table {
+    width: 100%; border-collapse: collapse; border: 1px solid #d1d5db; margin-top: 8px;
+  }
+  .gst-breakup-table th {
+    background: #f3f4f6; color: #1e293b; border: 1px solid #d1d5db;
+    font-size: 0.78em; text-align: center; padding: 4px 6px; font-weight: 700;
+  }
+  .gst-breakup-table td {
+    border: 1px solid #d1d5db; padding: 4px 6px; font-size: 0.9em;
+  }
+  .gst-breakup-table .num { text-align: right; white-space: nowrap; }
+  .gst-breakup-table .center { text-align: center; }
+  .gst-breakup-table .total-row-highlight td { font-weight: 700; background: #f3f4f6; }
 
   /* Full-page proposal layout: each page owns its padding so the header,
      content and footer stay aligned on every printed page. */
@@ -2297,13 +2399,13 @@ export function renderDynamicDocumentHTML({ docType, doc, client, company, templ
   .proposal-page .tax-bottom-ribbon { flex: 0 0 auto; }
 
   /* GST invoice: compact enough to stay on one A4 page like the sample. */
-  body.preset-tax-invoice, body.preset-gst-invoice { padding: 7mm 8mm; }
+  body.preset-tax-invoice, body.preset-gst-invoice { padding: 6mm 8mm; }
   body.preset-tax-invoice .doc-header,
-  body.preset-gst-invoice .doc-header { margin-bottom: 4px; }
+  body.preset-gst-invoice .doc-header { margin-bottom: 2px; }
   body.preset-tax-invoice .tax-items-table td,
-  body.preset-gst-invoice .tax-items-table td { padding: 3px 5px; }
+  body.preset-gst-invoice .tax-items-table td { padding: 2px 4px; }
   body.preset-tax-invoice .tax-title-box,
-  body.preset-gst-invoice .tax-title-box { padding: 3px 8px; margin: 4px 0 6px; }
+  body.preset-gst-invoice .tax-title-box { padding: 2px 8px; margin: 3px 0 4px; }
   body.preset-tax-invoice .tax-bank-sign-grid,
   body.preset-gst-invoice .tax-bank-sign-grid { margin-bottom: 0; }
   body.preset-tax-invoice .tax-services-banner,

@@ -5,6 +5,7 @@ const lineItemSchema = new mongoose.Schema(
     description: { type: String, required: true },
     category: {
       type: String,
+      trim: true,
       default: "other",
     },
     quantity: { type: Number, default: 1 },
@@ -47,6 +48,7 @@ const invoiceSchema = new mongoose.Schema(
     lineItems: { type: [lineItemSchema], required: true, validate: (v) => v.length > 0 },
 
     subTotal: { type: Number, required: true },
+    discountTotal: { type: Number, default: 0 },
     taxPercent: { type: Number, default: 0 },
     taxAmount: { type: Number, default: 0 },
     grandTotal: { type: Number, required: true },

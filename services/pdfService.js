@@ -2,6 +2,7 @@ import puppeteerCore from "puppeteer-core";
 import { renderInvoiceHTML } from "../templates/invoiceTemplate.js";
 import { renderQuotationHTML, escapeHtml } from "../templates/quotationTemplate.js";
 import { renderDynamicDocumentHTML, shouldUseExternalFooter } from "../templates/dynamicRenderer.js";
+import { resolveTemplate } from "./templateService.js";
 
 const getCompanyAndBank = () => ({
   company: {
@@ -116,7 +117,7 @@ export async function renderHtmlToPdf(html, { footerHtml } = {}) {
             displayHeaderFooter: true,
             headerTemplate: "<div></div>",
             footerTemplate: footerHtml,
-            margin: { top: "0mm", right: "0mm", bottom: "12mm", left: "0mm" },
+            margin: { top: "0mm", right: "0mm", bottom: "10mm", left: "0mm" },
           }
         : {
             format: "A4",
@@ -134,8 +135,7 @@ export async function renderHtmlToPdf(html, { footerHtml } = {}) {
 
 function pageFooterHtml(company) {
   return `
-    <div style="width:100%; padding:0 14mm; font-family: Arial, sans-serif; font-size:8px; color:#64748b; display:flex; justify-content:space-between; align-items:flex-end;">
-      <span>${escapeHtml(company.name || "")}</span>
+    <div style="width:100%; padding:0 14mm; font-family: Arial, sans-serif; font-size:8px; color:#64748b; display:flex; justify-content:flex-end; align-items:flex-end;">
       <span>Page <span class="pageNumber"></span> of <span class="totalPages"></span></span>
     </div>`;
 }
@@ -149,16 +149,25 @@ export async function generateInvoicePDF(
   const { company: defaultCompany, bank: defaultBank } = getCompanyAndBank();
   const company = customCompany || defaultCompany;
 
-  if (template) {
+  let resolvedTemplate = template;
+  if (!resolvedTemplate && company?._id) {
+    try {
+      resolvedTemplate = await resolveTemplate(company._id, "invoice", null);
+    } catch {
+      resolvedTemplate = null;
+    }
+  }
+
+  if (resolvedTemplate) {
     const html = renderDynamicDocumentHTML({
       docType: "invoice",
       doc: invoice,
       client,
       company,
-      template,
+      template: resolvedTemplate,
     });
     const footerHtml =
-      template.layout?.showPageNumbers === false || !shouldUseExternalFooter(template)
+      resolvedTemplate.layout?.showPageNumbers === false || !shouldUseExternalFooter(resolvedTemplate)
         ? undefined
         : pageFooterHtml(company);
     return renderHtmlToPdf(html, { footerHtml });
@@ -179,16 +188,25 @@ export async function generateQuotationPDF(
   const { company: defaultCompany } = getCompanyAndBank();
   const company = customCompany || defaultCompany;
 
-  if (template) {
+  let resolvedTemplate = template;
+  if (!resolvedTemplate && company?._id) {
+    try {
+      resolvedTemplate = await resolveTemplate(company._id, "quotation", null);
+    } catch {
+      resolvedTemplate = null;
+    }
+  }
+
+  if (resolvedTemplate) {
     const html = renderDynamicDocumentHTML({
       docType: "quotation",
       doc: quotation,
       client: client || {},
       company,
-      template,
+      template: resolvedTemplate,
     });
     const footerHtml =
-      template.layout?.showPageNumbers === false || !shouldUseExternalFooter(template)
+      resolvedTemplate.layout?.showPageNumbers === false || !shouldUseExternalFooter(resolvedTemplate)
         ? undefined
         : pageFooterHtml(company);
     return renderHtmlToPdf(html, { footerHtml });

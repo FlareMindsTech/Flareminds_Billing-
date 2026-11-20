@@ -171,6 +171,10 @@ export function renderInvoiceHTML({
       ? Math.round((tax / subtotal) * 100)
       : 0);
 
+  const hasMixedTaxRates =
+    items.length > 0 &&
+    new Set(items.map((item) => Number(item.taxPercent ?? taxRate))).size > 1;
+
   const total = Number(
     invoice.total ??
       invoice.grandTotal ??
@@ -1301,7 +1305,7 @@ body {
           <div class="totals-row">
 
             <span>
-              TAX (${taxRate}%)
+              ${hasMixedTaxRates ? "TAX" : `TAX (${taxRate}%)`}
             </span>
 
            <span>

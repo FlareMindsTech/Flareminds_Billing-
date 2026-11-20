@@ -312,115 +312,15 @@ export function defaultContent(docType, preset = "classic") {
   };
 
   if (isProposal) {
-    base.subject = "3KW Solar On-Grid System for Domestic";
+    base.subject = "";
     base.validityText = "30 Days";
-    base.purposeText =
-      "We are pleased to submit our detailed commercial proposal for the design, supply, installation and commissioning of the proposed solar power system.";
+    base.purposeText = "";
     base.closingText =
       "We hope the above offer suits your requirement and expect your valuable order at the earliest.";
-    base.noticeText =
-      "For a 3KW solar system, the Central Government subsidy is Rs.78,000/- and the Tamil Nadu Government subsidy is Rs.22,000/-, making the total subsidy amount Rs.1,00,000/-. The subsidy amount will be credited directly to the customer's bank account.\n\nSince the proposed solar capacity is above the existing EB sanctioned load, the TNEB sanctioned load enhancement process and applicable charges shall be under the customer's scope.\n\nThe quoted amount covers only the specified scope of work. Any additional work requested or required will be charged separately.";
-    base.scopeOfWork = [
-      "Site Visit",
-      "Unloading",
-      "Lifting",
-      "AC Earth",
-      "DC Earth",
-      "Lightning Arrester",
-      "Customized Structure Work",
-      "Panel Installation",
-      "Cable Laying",
-      "Net Meter Payment",
-      "Commissioning",
-      "System Configuration (After Net Meter Connection)",
-      "Five Years Free Service",
-    ];
-    base.processSteps = [
-      {
-        title: "Site Visit",
-        description:
-          "We visit the site to check space availability, roof strength, and electrical setup. This helps us plan the solar installation properly.",
-      },
-      {
-        title: "Unloading",
-        description:
-          "Our team ensures safe transport using large vehicles, along with careful loading and unloading of solar panels, inverters, and other materials to prevent any damage.",
-      },
-      {
-        title: "Lifting",
-        description:
-          "We move the solar panels and other materials to the installation area safely using the right equipment.",
-      },
-      {
-        title: "AC Earth",
-        description:
-          "We install a proper AC earthing system to protect the inverter and electrical components from shocks or damage due to power faults.",
-      },
-      {
-        title: "DC Earth",
-        description:
-          "A DC earthing system is installed to protect solar panels and wiring from electrical issues, ensuring smooth energy flow.",
-      },
-      {
-        title: "Lightning Arrester",
-        description:
-          "We install lightning arresters to protect the solar system from lightning strikes, preventing damage to the panels and electrical equipment.",
-      },
-      {
-        title: "Customized Structure Work",
-        description:
-          "Based on the site's needs, we build strong mounting structures using 2X2-inch 2mm thickness galvanized pipes. These structures keep the panels secure and last for years.",
-      },
-      {
-        title: "Panel Installation",
-        description:
-          "Our experts fix the solar panels at the best angle and position to capture maximum sunlight and generate the most power.",
-      },
-      {
-        title: "Cable Laying",
-        description:
-          "We neatly arrange and connect all cables, ensuring safe and efficient power transmission from the panels to the inverter and main grid.",
-      },
-      {
-        title: "Net Meter Payment",
-        description:
-          "Our team assists with the net meter payment process and coordinates with the electricity board (EB) or DISCOM. The DISCOM or EB provides the net meter, which is essential for measuring the solar power exported to the grid.",
-      },
-      {
-        title: "Commissioning",
-        description:
-          "We check and test the system after installation, making sure everything works correctly before turning it on.",
-      },
-      {
-        title: "System Configuration (After Net Meter Connection)",
-        description:
-          "Once the net meter is installed, we set up the system, configure settings, and enable performance monitoring for smooth operation.",
-      },
-      {
-        title: "Five Years Free Service",
-        description:
-          "We provide free service for five years, including regular maintenance and system checks to ensure long-term performance. 3 Months Once: [1. Solar Panel Cleaning, 2. Solar Plant Inspection, 3. Inverter Inspection, 4. Electrical Connection Inspection, 5. Earthing & Lightning Protection Check, 6. Fault Complaint Support]",
-      },
-    ];
-    base.paymentMilestones = [
-      {
-        label: "Advance Payment",
-        percentage: 80,
-        description: "To be paid before the commencement of the project.",
-      },
-      {
-        label: "After the Installation of Work",
-        percentage: 15,
-        description:
-          "Can be released after the full completion of the installation work, excluding the net metering process.",
-      },
-      {
-        label: "After Commissioning of the Net Meter",
-        percentage: 5,
-        description:
-          "Kindly release the amount after the completion of the net meter commissioning process.",
-      },
-    ];
+    base.noticeText = "";
+    base.scopeOfWork = [];
+    base.processSteps = [];
+    base.paymentMilestones = [];
   }
 
   return base;

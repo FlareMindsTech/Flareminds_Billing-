@@ -1,12 +1,11 @@
 import mongoose from "mongoose";
 import Company from "../models/Company.js";
-import { ensureDefaultCompany } from "../services/companyService.js";
 import { isCompanyActive } from "../utils/companyStatus.js";
 
 // Resolves the active company for every scoped request.
 // - Company admins are hard-locked to their own company; any other
 //   X-Company-Id/query/body value is rejected.
-// - Superadmins may target any company, falling back to the default.
+// - Superadmins may target any explicitly selected active company.
 export async function resolveCompany(req, res, next) {
   const rawId =
     req.get("x-company-id") ||
@@ -65,34 +64,9 @@ export async function resolveCompany(req, res, next) {
     return next();
   }
 
-  // Fallback: Default company
-  let company =
-    (await Company.findOne({ isDefault: true, status: { $ne: "suspended" } })) ||
-    (await Company.findOne({ status: "active" }).sort({ createdAt: 1 })) ||
-    (await Company.findOne({ isActive: true }).sort({ createdAt: 1 }));
-
-  if (!company) {
-    // Auto-bootstrap default company if none exists
-    try {
-      company = await ensureDefaultCompany();
-    } catch {
-      // Fallback in test / offline mode
-      company = null;
-    }
-  }
-
-  if (company) {
-    if (!isCompanyActive(company)) {
-      return res.status(403).json({
-        code: "COMPANY_SUSPENDED",
-        message: "This company is suspended. Contact the platform administrator.",
-      });
-    }
-    req.company = company;
-    req.companyId = company._id;
-  }
-
-  next();
+  return res.status(400).json({
+    message: "A company must be selected for this operation",
+  });
 }
 
 export async function requireCompany(req, res, next) {

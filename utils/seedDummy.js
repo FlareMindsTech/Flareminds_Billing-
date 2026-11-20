@@ -1,5 +1,10 @@
 import "dotenv/config";
 
+if (process.env.NODE_ENV === "production") {
+  console.error("Refusing to run seedDummy.js in production.");
+  process.exit(1);
+}
+
 import { connectDB } from "../config/db.js";
 import Admin from "../models/Admin.js";
 import Client from "../models/Client.js";

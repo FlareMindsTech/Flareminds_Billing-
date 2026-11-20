@@ -2,6 +2,8 @@
 // comparison so a saved value and a derived value can never disagree about the
 // 2-digit state code.
 
+import { stateCodeForName } from "./indianStates.js";
+
 export const GSTIN_PATTERN = /^[0-9]{2}[A-Z0-9]{10}[A-Z0-9]{3}$/;
 
 export const TAX_TYPE_CGST_SGST = "cgst_sgst";
@@ -25,6 +27,15 @@ export const resolvePlaceOfSupply = ({ company, client } = {}) => {
 
 // A valid GSTIN derives the 2-digit state code from its first two digits;
 // anything else falls back to the saved state code.
+const VALID_GST_STATE_CODES = new Set([
+  ...Array.from({ length: 38 }, (_, i) => String(i + 1).padStart(2, "0")),
+  "97",
+  "99",
+]);
+
+export const isValidGstStateCode = (code) =>
+  VALID_GST_STATE_CODES.has(String(code || "").trim().toUpperCase());
+
 export const resolveStateCode = (entry = null) => {
   const gstinCode = entry?.gstn
     ? String(normalizeGstin(entry.gstn)?.slice(0, 2) || "")
@@ -32,9 +43,13 @@ export const resolveStateCode = (entry = null) => {
   const savedCode = String(
     entry?.stateCode || entry?.gstStateCode || ""
   ).trim().toUpperCase();
-  const code = gstinCode || savedCode;
+  let code = gstinCode || savedCode;
+  if (!(/^[0-9]{2}$/.test(code) && isValidGstStateCode(code))) {
+    const fromName = stateCodeForName(entry?.state || entry?.stateName);
+    if (fromName) code = fromName;
+  }
 
-  return /^[0-9]{2}$/.test(code) ? code : null;
+  return /^[0-9]{2}$/.test(code) && isValidGstStateCode(code) ? code : null;
 };
 
 export const resolveStateName = (entry = null) =>

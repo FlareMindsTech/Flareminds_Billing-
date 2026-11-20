@@ -1218,7 +1218,7 @@ export const convertQuotationToInvoice = async (req, res) => {
 
   const invoiceItems = (quotation.lineItems || []).map((item) => ({
     description: item.description,
-    category: item.category || "other",
+    category: String(item.category || "other").trim() || "other",
     quantity: Number(item.quantity),
     rate: Number(item.unitPrice ?? item.rate ?? 0),
     hsnSac: item.hsnSac || item.customFields?.hsnSac || item.customFields?.hsnCode || "",

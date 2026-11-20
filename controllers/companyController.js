@@ -6,8 +6,9 @@ import Quotation from "../models/Quotation.js";
 import { audit } from "../utils/auditLog.js";
 import { ensureDefaultTemplates } from "../services/templateService.js";
 import { isValidEmail } from "../utils/validation.js";
-import { stateCodeForName } from "../utils/indianStates.js";
-import { resolveStateCode, normalizeGstin } from "../utils/gst.js";
+import { stateCodeForName, stateNameForCode } from "../utils/indianStates.js";
+import { resolveStateCode, normalizeGstin, isValidGstStateCode } from "../utils/gst.js";
+import { uploadCompanyLogo, isAllowedLogoMime, MAX_LOGO_BYTES } from "../services/bunnyStorage.js";
 
 const COMPANY_FIELDS = [
   "name",
@@ -228,6 +229,9 @@ export function validateCompany(data, { creating = false } = {}) {
     if (code && !/^[0-9]{2}$/.test(code)) {
       return "GST state code must be 2 digits.";
     }
+    if (code && !isValidGstStateCode(code)) {
+      return "Invalid GST state code.";
+    }
     if (state && code) {
       const expected = stateCodeForName(state);
       if (expected && expected !== code) {
@@ -240,11 +244,19 @@ export function validateCompany(data, { creating = false } = {}) {
     }
   }
 
-  if (data.gstn !== undefined && !data.stateCode) {
-    const normalized = normalizeGstin(data.gstn);
-    if (normalized) {
+  if (data.gstn !== undefined) {
+    const rawGstn = String(data.gstn || "").trim();
+    if (rawGstn) {
+      const normalized = normalizeGstin(rawGstn);
+      if (!normalized) return "Invalid GSTIN.";
       const derived = resolveStateCode({ gstn: normalized });
-      if (derived) data.stateCode = derived;
+      if (!derived) return "GSTIN state code is not a valid Indian state code.";
+      data.gstn = normalized;
+      if (!data.stateCode) data.stateCode = derived;
+      if (!data.state) {
+        const name = stateNameForCode(derived);
+        if (name) data.state = name;
+      }
     }
   }
 
@@ -592,6 +604,53 @@ const TENANT_EDITABLE_FIELDS = new Set([
   "customFields",
   "itemCustomFields",
 ]);
+
+export const uploadCompanyLogoHandler = async (req, res) => {
+  const companyId = req.companyId || req.admin?.companyId;
+  if (!companyId) {
+    return res.status(403).json({ message: "No company is assigned to this account" });
+  }
+
+  const { dataUrl, kind } = req.body || {};
+  if (typeof dataUrl !== "string") {
+    return res.status(400).json({ message: "Image data is required" });
+  }
+
+  const match = /^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/.exec(dataUrl);
+  if (!match) {
+    return res.status(400).json({ message: "Invalid image data" });
+  }
+
+  const mimeType = match[1].toLowerCase();
+  if (!isAllowedLogoMime(mimeType)) {
+    return res.status(400).json({ message: "Unsupported image type" });
+  }
+
+  let buffer;
+  try {
+    buffer = Buffer.from(match[2], "base64");
+  } catch {
+    return res.status(400).json({ message: "Invalid image data" });
+  }
+
+  if (!buffer.length || buffer.length > MAX_LOGO_BYTES) {
+    return res.status(400).json({ message: "Logo image is too large or empty" });
+  }
+
+  try {
+    const url = await uploadCompanyLogo({
+      buffer,
+      mimeType,
+      companyId,
+      kind,
+    });
+    return res.json({ url });
+  } catch (err) {
+    return res.status(err.status || 500).json({
+      message: err.message || "Failed to upload logo",
+    });
+  }
+};
 
 export const getMyCompany = async (req, res) => {
   const companyId = req.admin?.companyId || req.companyId;

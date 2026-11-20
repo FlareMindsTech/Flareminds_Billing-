@@ -82,6 +82,8 @@ async function createDefaultCompany() {
 // Guarantees there is always a default company and assigns legacy records
 // (created before multi-company support) to it. Safe to run on every startup.
 export async function ensureDefaultCompany() {
+  // Do not auto-create a company for a clean multi-tenant deployment.
+  // Legacy records are only backfilled when a company already exists.
   let company = await Company.findOne({ isDefault: true });
 
   if (!company) {
@@ -91,9 +93,11 @@ export async function ensureDefaultCompany() {
       if (!oldest.invoicePrefix) oldest.invoicePrefix = "FM";
       if (!oldest.quotationPrefix) oldest.quotationPrefix = "FM-QTN";
       company = await oldest.save();
-    } else {
-      company = await createDefaultCompany();
     }
+  }
+
+  if (!company) {
+    return null;
   }
 
   // Use companyId to avoid colliding with client's business name string

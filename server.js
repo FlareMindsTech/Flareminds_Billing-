@@ -86,7 +86,7 @@ export function createApp() {
     })
   );
 
-  app.use(express.json({ limit: "100kb" }));
+  app.use(express.json({ limit: "1mb" }));
 
   if (process.env.NODE_ENV !== "production" && process.env.NODE_ENV !== "test") {
     app.use(morgan("dev"));
@@ -116,12 +116,12 @@ export function createApp() {
     ["/api/company", "/billing/company"],
     requireAuth,
     requireCompanyAdmin,
+    resolveCompany,
     companySettingsRoutes
   );
   app.use(
     ["/api/templates", "/billing/templates"],
     requireAuth,
-    requireCompanyAdmin,
     resolveCompany,
     templateRoutes
   );
@@ -129,21 +129,18 @@ export function createApp() {
   app.use(
     ["/api/clients", "/billing/clients"],
     requireAuth,
-    requireCompanyAdmin,
     resolveCompany,
     clientRoutes
   );
   app.use(
     ["/api/invoices", "/billing/invoices"],
     requireAuth,
-    requireCompanyAdmin,
     resolveCompany,
     invoiceRoutes
   );
   app.use(
     ["/api/quotations", "/billing/quotations"],
     requireAuth,
-    requireCompanyAdmin,
     resolveCompany,
     quotationRoutes
   );

@@ -34,7 +34,6 @@ const INVOICE_UPDATE_FIELDS = [
   "status",
   "customFields",
 ];
-const LINE_ITEM_CATEGORIES = new Set(["digital-marketing", "development", "other"]);
 const INVOICE_STATUSES = new Set([
   "draft",
   "sent",
@@ -94,9 +93,8 @@ function validateLineItems(lineItems, itemFieldDefs = []) {
       return "Line item rate must be a number greater than or equal to 0";
     }
 
-    if (item.category !== undefined && !LINE_ITEM_CATEGORIES.has(item.category)) {
-      return "Invalid line item category";
-    }
+    // Category is free-text (consistent with Quotations); any value is
+    // accepted and normalized to "other" when blank.
 
     if (item.taxPercent !== undefined && item.taxPercent !== null) {
       const taxPercent = Number(item.taxPercent);
@@ -230,7 +228,7 @@ export function computeTotals(lineItems = [], docTaxPercent = 0, shippingCharges
       quantity: Number(item.quantity ?? 1),
       unitPrice: Number(item.rate ?? item.unitPrice ?? 0),
       description: item.description,
-      category: item.category || "other",
+      category: String(item.category || "other").trim() || "other",
       hsnSac: item.hsnSac || "",
       customFields: item.customFields || {},
       discountType: item.discountType || "none",
@@ -253,7 +251,7 @@ export function computeTotals(lineItems = [], docTaxPercent = 0, shippingCharges
 
     return {
       description: item.description,
-      category: item.category || "other",
+      category: String(item.category || "other").trim() || "other",
       quantity: item.quantity,
       rate: item.unitPrice,
       amount: base,
@@ -459,6 +457,7 @@ export const createInvoice = async (req, res) => {
       dueDate: invoiceDueDate,
       lineItems: items,
       subTotal,
+      discountTotal,
       taxPercent: tax,
       taxAmount: taxTotal,
       grandTotal,
@@ -505,12 +504,15 @@ export const updateInvoice = async (req, res) => {
     const invoice = await Invoice.findOne({ _id: req.params.id, companyId });
     if (!invoice) return res.status(404).json({ message: "Invoice not found" });
 
-    const clientDoc = await Client.findOne({ _id: invoice.client, companyId });
     const body = req.body || {};
     const updates = {};
     for (const key of INVOICE_UPDATE_FIELDS) {
       if (body[key] !== undefined) updates[key] = body[key];
     }
+
+    const effectiveClientId = updates.client !== undefined ? updates.client : invoice.client;
+    const clientDoc = await Client.findOne({ _id: effectiveClientId, companyId });
+    if (!clientDoc) return res.status(404).json({ message: "Client not found" });
 
     if (updates.client !== undefined) {
       if (
@@ -643,6 +645,7 @@ export const updateInvoice = async (req, res) => {
     Object.assign(invoice, updates, {
       lineItems: items,
       subTotal,
+      discountTotal,
       taxAmount: taxTotal,
       grandTotal,
       taxType,
