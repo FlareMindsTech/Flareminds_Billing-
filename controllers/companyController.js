@@ -8,7 +8,12 @@ import { ensureDefaultTemplates } from "../services/templateService.js";
 import { isValidEmail } from "../utils/validation.js";
 import { stateCodeForName, stateNameForCode } from "../utils/indianStates.js";
 import { resolveStateCode, normalizeGstin, isValidGstStateCode } from "../utils/gst.js";
-import { uploadCompanyLogo, isAllowedLogoMime, MAX_LOGO_BYTES } from "../services/bunnyStorage.js";
+import {
+  uploadCompanyLogo,
+  isAllowedLogoMime,
+  MAX_LOGO_BYTES,
+  verifyPublicLogoUrl,
+} from "../services/bunnyStorage.js";
 
 const COMPANY_FIELDS = [
   "name",
@@ -644,7 +649,16 @@ export const uploadCompanyLogoHandler = async (req, res) => {
       companyId,
       kind,
     });
-    return res.json({ url });
+    // Verify the uploaded logo is publicly accessible over the CDN (HTTP 200
+    // with an image Content-Type) before returning it as the logo URL.
+    let publiclyAccessible = false;
+    try {
+      const verification = await verifyPublicLogoUrl(url);
+      publiclyAccessible = Boolean(verification.ok && verification.isImage);
+    } catch {
+      publiclyAccessible = false;
+    }
+    return res.json({ url, publiclyAccessible });
   } catch (err) {
     return res.status(err.status || 500).json({
       message: err.message || "Failed to upload logo",

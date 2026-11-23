@@ -419,7 +419,7 @@ export const previewTemplate = async (req, res) => {
           })),
     };
 
-    const html = renderDynamicDocumentHTML({
+    const html = await renderDynamicDocumentHTML({
       docType,
       doc,
       client: doc.clientSnapshot || doc.client || {},

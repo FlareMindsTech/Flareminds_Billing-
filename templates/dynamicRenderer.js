@@ -3,6 +3,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { invoicePaymentState, invoiceStatusLabel } from "../utils/invoicePayments.js";
 import { TAX_TYPE_CGST_SGST, TAX_TYPE_IGST } from "../utils/gst.js";
+import { fetchLogoAsDataUri } from "../services/bunnyStorage.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -116,10 +117,19 @@ const toDataUri = (filePath) => {
   }
 };
 
-const resolveImage = (value, fallbackFile) => {
+const resolveImage = async (value, fallbackFile) => {
   if (value) {
-    if (value.startsWith("data:") || /^https?:\/\//i.test(value)) return value;
-    return toDataUri(value);
+    if (value.startsWith("data:")) return value;
+    if (/^https?:\/\//i.test(value)) {
+      // Inline remote logos (e.g. BunnyCDN URLs) as base64 data URIs so they
+      // render inside <iframe srcDoc> even when the CDN restricts localhost or
+      // null origins. Falls back to the original URL if the backend fetch fails.
+      const inlined = await fetchLogoAsDataUri(value);
+      return inlined !== null ? inlined : value;
+    }
+    // Strip file:// prefix for local file URLs so they can be read as base64
+    const filePath = value.replace(/^file:\/\/\//, "");
+    return toDataUri(filePath);
   }
   if (fallbackFile) {
     return toDataUri(path.join(IMAGES_DIR, fallbackFile));
@@ -490,13 +500,13 @@ function companyContact(company) {
     .join("");
 }
 
-function renderLogo(company, layout) {
-  const icon = resolveImage(company.logoIconUrl, null);
-  const logoText = layout.showLogoText ? resolveImage(company.logoTextUrl, null) : null;
+async function renderLogo(company, layout) {
+  const icon = await resolveImage(company.logoIconUrl, null);
+  const logoText = layout.showLogoText ? await resolveImage(company.logoTextUrl, null) : null;
   const initials = escapeHtml((company.code || company.name || "CO").slice(0, 3).toUpperCase());
 
   const mark = icon
-    ? `<div class="logo-img-wrap"><img src="${icon}" alt="logo" class="logo-icon" onerror="this.style.display='none';const fb=this.parentElement.querySelector('.logo-fallback');if(fb)fb.style.display='flex';" /><div class="logo-fallback" style="display:none">${initials}</div></div>`
+    ? `<div class="logo-img-wrap"><img src="${icon}" alt="logo" class="logo-icon" onerror="this.style.display='none'" /></div>`
     : `<div class="logo-fallback">${initials}</div>`;
 
   return `
@@ -506,10 +516,10 @@ function renderLogo(company, layout) {
     </div>`;
 }
 
-function renderHeader({ company, layout, labels, docType }) {
+async function renderHeader({ company, layout, labels, docType }) {
   const title = docType === "invoice" ? labels.invoiceTitle : labels.quotationTitle;
   const align = layout.logoPosition || "left";
-  const logo = renderLogo(company, layout);
+  const logo = await renderLogo(company, layout);
 
   return `
     <header class="doc-header logo-${escapeHtml(align)}">
@@ -1134,13 +1144,13 @@ PRESET_CSS["premium-invoice"] = CORPORATE_CSS;
 PRESET_CSS["service-invoice"] = CORPORATE_CSS;
 PRESET_CSS["minimal-quotation"] = MINIMAL_CSS;
 
-function renderTaxInvoiceDocument({ docType, doc, client, company, template, currency, labels, layout }) {
+async function renderTaxInvoiceDocument({ docType, doc, client, company, template, currency, labels, layout }) {
   const isInvoice = docType === "invoice";
   const docNumber = isInvoice ? (doc.invoiceNumber || "-") : (doc.quotationNumber || "-");
   const docDate = isInvoice ? (doc.date || doc.createdAt) : (doc.issueDate || doc.createdAt);
   const title = isInvoice ? (labels.invoiceTitle || "INVOICE") : (labels.quotationTitle || "QUOTATION");
   const items = Array.isArray(doc.lineItems) ? doc.lineItems : (Array.isArray(doc.items) ? doc.items : []);
-  const logo = renderLogo(company, layout);
+  const logo = await renderLogo(company, layout);
   const content = templateContent(template);
   const signature = resolveSignatory(company, content);
   const showGstBreakup = content ? content.showGstBreakup !== false : true;
@@ -1439,12 +1449,12 @@ function renderTaxInvoiceDocument({ docType, doc, client, company, template, cur
   `;
 }
 
-function renderQuotationProposalDocument({ docType, doc, client, company, template, currency, labels, layout }) {
+async function renderQuotationProposalDocument({ docType, doc, client, company, template, currency, labels, layout }) {
   const docNumber = doc.quotationNumber || doc.invoiceNumber || "-";
   const docDate = doc.issueDate || doc.date || doc.createdAt;
   const title = labels.quotationTitle || "QUOTATION / ESTIMATION";
   const items = Array.isArray(doc.lineItems) ? doc.lineItems : (Array.isArray(doc.items) ? doc.items : []);
-  const logo = renderLogo(company, layout);
+  const logo = await renderLogo(company, layout);
   const content = templateContent(template);
   const signature = resolveSignatory(company, content);
 
@@ -1481,6 +1491,8 @@ function renderQuotationProposalDocument({ docType, doc, client, company, templa
     ? content.showServicesBanner !== false && Boolean(servicesBanner)
     : Boolean(servicesBanner);
   const showSignature = content ? content.showSignature !== false : true;
+  const showAmountInWords = content ? content.showAmountInWords !== false : true;
+  const showBankDetails = content ? content.showBankDetails !== false : true;
 
   const ebNumber = doc.customFields?.ebNumber || doc.customFields?.connectionNo || client.gstn || "";
 
@@ -1596,9 +1608,11 @@ function renderQuotationProposalDocument({ docType, doc, client, company, templa
           </tbody>
         </table>
 
-        <div class="prop-words-row">
+        ${showAmountInWords
+          ? `<div class="prop-words-row">
           <strong>Amount in words:</strong> ${amountInWords(grandTotal, currency)}
-        </div>
+        </div>`
+          : ""}
 
         <div class="prop-terms-grid">
           <div class="prop-terms-col">
@@ -1624,7 +1638,8 @@ function renderQuotationProposalDocument({ docType, doc, client, company, templa
             }
           </div>
 
-          <div class="prop-bank-col">
+          ${showBankDetails
+            ? `<div class="prop-bank-col">
             <div class="prop-subhead">Bank Details:</div>
             <div>Account Name: ${escapeHtml(bank.accountName || company.name || "")},</div>
             ${bank.accountNumber ? `<div>Account No: ${escapeHtml(bank.accountNumber)},</div>` : ""}
@@ -1633,7 +1648,8 @@ function renderQuotationProposalDocument({ docType, doc, client, company, templa
             ${bank.ifsc ? `<div>IFSC Code: ${escapeHtml(bank.ifsc)}</div>` : ""}
             ${bank.upi ? `<div>GPay No: ${escapeHtml(bank.upi)}</div>` : ""}
             <div style="margin-top:8px;"><strong>Validity:</strong> ${escapeHtml(validityText)}</div>
-          </div>
+          </div>`
+            : ""}
         </div>
 
         ${
@@ -1647,18 +1663,16 @@ function renderQuotationProposalDocument({ docType, doc, client, company, templa
             <div>${escapeHtml(closingText)}</div>
             <div class="prop-thank-box">THANK YOU</div>
           </div>
-          <div class="prop-sign-box">
+          ${showSignature
+            ? `<div class="prop-sign-box">
             <div>Yours faithfully,</div>
             <div class="prop-stamp-space"></div>
-            ${
-              showSignature
-                ? `<div>
-                    <strong>${escapeHtml(signature.name)}</strong>
-                    ${signature.title ? `<br/><span style="font-size:0.9em;color:#475569;">${escapeHtml(signature.title)}</span>` : ""}
-                  </div>`
-                : ""
-            }
-          </div>
+            <div>
+              <strong>${escapeHtml(signature.name)}</strong>
+              ${signature.title ? `<br/><span style="font-size:0.9em;color:#475569;">${escapeHtml(signature.title)}</span>` : ""}
+            </div>
+          </div>`
+            : ""}
         </div>
 
         ${showServicesBanner ? `<div class="tax-services-banner">${escapeHtml(servicesBanner)}</div>` : ""}
@@ -1776,7 +1790,7 @@ function renderQuotationProposalDocument({ docType, doc, client, company, templa
   `;
 }
 
-function renderCorporateInvoiceDocument({
+async function renderCorporateInvoiceDocument({
   docType,
   doc,
   client,
@@ -1790,7 +1804,7 @@ function renderCorporateInvoiceDocument({
   const isInvoice = docType === "invoice";
   const content = templateContent(template);
   const signature = resolveSignatory(company, content);
-  const logo = renderLogo(company, layout);
+  const logo = await renderLogo(company, layout);
   const title = isInvoice
     ? labels.invoiceTitle || "TAX INVOICE"
     : labels.quotationTitle || "QUOTATION";
@@ -1973,10 +1987,10 @@ function renderCorporateInvoiceDocument({
     </div>`;
 }
 
-function renderMinimalQuotationDocument({ doc, client, company, template, currency, labels, layout }) {
+async function renderMinimalQuotationDocument({ doc, client, company, template, currency, labels, layout }) {
   const content = templateContent(template);
   const signature = resolveSignatory(company, content);
-  const logo = renderLogo(company, layout);
+  const logo = await renderLogo(company, layout);
   const items = Array.isArray(doc.lineItems) ? doc.lineItems : [];
   const subject = doc.customFields?.subject || content?.subject || doc.subject || "";
 
@@ -2107,10 +2121,16 @@ export function shouldUseExternalFooter(template) {
   ].includes(preset);
 }
 
-export function renderDynamicDocumentHTML({ docType, doc, client, company, template }) {
+export async function renderDynamicDocumentHTML({ docType, doc, client, company, template }) {
   const safeDoc = plain(doc);
   const safeCompany = plain(company);
   const safeTemplate = plain(template);
+
+  // Resolve company logos up front: remote (CDN) URLs are fetched on the
+  // backend and inlined as base64 data URIs before the document HTML is built,
+  // so they render reliably in <iframe srcDoc> previews and PDFs.
+  safeCompany.logoIconUrl = await resolveImage(safeCompany.logoIconUrl, null);
+  safeCompany.logoTextUrl = await resolveImage(safeCompany.logoTextUrl, null);
   const labels = safeTemplate.labels || {};
   const layout = safeTemplate.layout || {};
   const currency = currencyCode(safeDoc, safeCompany);
@@ -2133,7 +2153,9 @@ export function renderDynamicDocumentHTML({ docType, doc, client, company, templ
     client: () => renderClient({ client: clientData, labels }),
     items: () => renderItems({ items, docType, template: safeTemplate, labels, currency, doc: safeDoc }),
     totals: () => renderTotals({ doc: safeDoc, docType, labels, currency, template: safeTemplate }) +
-      renderGstBreakupBlock(items, safeDoc, currency) +
+      (safeTemplate?.content?.showGstBreakup !== false
+        ? renderGstBreakupBlock(items, safeDoc, currency)
+        : "") +
       (showAmountInWords ? `<div class="tax-words-row"><strong>Amount in words:</strong> ${amountInWords(Number(safeDoc.grandTotal || safeDoc.subTotal || 0), currency)}</div>` : ""),
     bank: () => renderBank({ company: safeCompany }),
     notes: () => renderNotes({ doc: safeDoc, labels }),
@@ -2166,7 +2188,7 @@ export function renderDynamicDocumentHTML({ docType, doc, client, company, templ
 
   let body;
   if (isProposal) {
-    body = renderQuotationProposalDocument({
+    body = await renderQuotationProposalDocument({
       docType,
       doc: safeDoc,
       client: clientData,
@@ -2177,7 +2199,7 @@ export function renderDynamicDocumentHTML({ docType, doc, client, company, templ
       layout,
     });
   } else if (isGstInvoice) {
-    body = renderTaxInvoiceDocument({
+    body = await renderTaxInvoiceDocument({
       docType,
       doc: safeDoc,
       client: clientData,
@@ -2188,7 +2210,7 @@ export function renderDynamicDocumentHTML({ docType, doc, client, company, templ
       layout,
     });
   } else if (isCorporateInvoice) {
-    body = renderCorporateInvoiceDocument({
+    body = await renderCorporateInvoiceDocument({
       docType,
       doc: safeDoc,
       client: clientData,
@@ -2200,7 +2222,7 @@ export function renderDynamicDocumentHTML({ docType, doc, client, company, templ
       variant: preset === "service-invoice" ? "service" : "premium",
     });
   } else if (isMinimalQuotation) {
-    body = renderMinimalQuotationDocument({
+    body = await renderMinimalQuotationDocument({
       doc: safeDoc,
       client: clientData,
       company: safeCompany,
@@ -2210,10 +2232,10 @@ export function renderDynamicDocumentHTML({ docType, doc, client, company, templ
       layout,
     });
   } else {
-    body = sections
-      .map((section) => sectionHtml[section.key]?.() || "")
-      .filter(Boolean)
-      .join("");
+    const sectionResults = await Promise.all(
+      sections.map((section) => sectionHtml[section.key]?.() || "")
+    );
+    body = sectionResults.filter(Boolean).join("");
   }
 
   // Fields block is always inserted after the client block when present,

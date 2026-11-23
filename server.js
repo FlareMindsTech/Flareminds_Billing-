@@ -25,6 +25,7 @@ import adminRoutes from "./routes/adminRoutes.js";
 import companySettingsRoutes from "./routes/companySettingsRoutes.js";
 import templateRoutes from "./routes/templateRoutes.js";
 import { requireSuperadmin, requireCompanyAdmin } from "./middleware/role.js";
+import { serveCompanyLogoProxy } from "./services/bunnyStorage.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -159,6 +160,11 @@ export function createApp() {
       uptime: process.uptime(),
     });
   });
+
+  // Proxy company logos through the backend so logo previews (Branding) never
+  // depend on the CDN allowing the page's or a null origin. Only the configured
+  // CDN host is proxied (SSRF guard inside the handler).
+  app.get(["/api/uploads/logo", "/billing/uploads/logo"], serveCompanyLogoProxy);
 
   // JSON 404 for API routes instead of falling through to Express' HTML page.
   app.use(["/api", "/billing"], (req, res) => {

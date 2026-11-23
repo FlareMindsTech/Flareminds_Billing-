@@ -159,7 +159,7 @@ export function renderQuotationHTML({ quotation, client = {}, company = {} }) {
   );
 
   const logoBlock = logoIconSrc
-    ? `<img src="${logoIconSrc}" alt="${escapeHtml(company.name || "")}" class="logo-icon" />`
+    ? `<img src="${logoIconSrc}" alt="${escapeHtml(company.name || "")}" class="logo-icon" onerror="this.style.display='none'" />`
     : `<div class="logo-fallback"><span>${escapeHtml(
         (company.name || "FM")
           .split(" ")
@@ -170,7 +170,7 @@ export function renderQuotationHTML({ quotation, client = {}, company = {} }) {
       )}</span></div>`;
 
   const brandTextBlock = logoTextSrc
-    ? `<img src="${logoTextSrc}" alt="${escapeHtml(company.name || "")}" class="logo-text" />`
+    ? `<img src="${logoTextSrc}" alt="${escapeHtml(company.name || "")}" class="logo-text" onerror="this.style.display='none'" />`
     : `<p class="company-name">${escapeHtml(company.name || "Company")}</p>`;
 
   const rows = items.length

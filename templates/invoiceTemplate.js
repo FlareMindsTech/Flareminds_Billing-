@@ -409,7 +409,7 @@ export function renderInvoiceHTML({
   const logoBlock = logoIconSrc
     ? `<img src="${logoIconSrc}" alt="${escapeHtml(
         company.name || ""
-      )}" class="logo-icon" />`
+      )}" class="logo-icon" onerror="this.style.display='none'" />`
     : `<div class="logo-fallback"><span>${escapeHtml(
         (company.name || "FM")
           .split(" ")
@@ -422,7 +422,7 @@ export function renderInvoiceHTML({
   const brandTextBlock = logoTextSrc
     ? `<img src="${logoTextSrc}" alt="${escapeHtml(
         company.name || ""
-      )}" class="logo-text" />`
+      )}" class="logo-text" onerror="this.style.display='none'" />`
     : `<p class="company-name">${escapeHtml(
         company.name || "Company"
       )}</p>`;

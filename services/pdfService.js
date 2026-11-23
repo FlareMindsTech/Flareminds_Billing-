@@ -159,7 +159,7 @@ export async function generateInvoicePDF(
   }
 
   if (resolvedTemplate) {
-    const html = renderDynamicDocumentHTML({
+    const html = await renderDynamicDocumentHTML({
       docType: "invoice",
       doc: invoice,
       client,
@@ -198,7 +198,7 @@ export async function generateQuotationPDF(
   }
 
   if (resolvedTemplate) {
-    const html = renderDynamicDocumentHTML({
+    const html = await renderDynamicDocumentHTML({
       docType: "quotation",
       doc: quotation,
       client: client || {},
