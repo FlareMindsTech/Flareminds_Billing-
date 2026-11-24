@@ -79,6 +79,7 @@ const quotationSchema = new mongoose.Schema(
     shippingCharges: { type: Number, default: 0 },
     grandTotal: { type: Number, required: true },
     currency: { type: String, default: "INR", maxlength: 8 },
+    exchangeRate: { type: Number, default: 1, min: 0 },
 
     notes: { type: String, default: "", maxlength: 3000 },
     termsAndConditions: { type: String, default: "", maxlength: 3000 },

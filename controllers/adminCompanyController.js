@@ -363,7 +363,7 @@ export const getPlatformOverview = async (req, res) => {
         $group: {
           _id: { companyId: "$companyId", status: "$status" },
           count: { $sum: 1 },
-          value: { $sum: "$grandTotal" },
+          value: { $sum: { $multiply: ["$grandTotal", { $ifNull: ["$exchangeRate", 1] }] } },
         },
       },
     ]),
@@ -373,7 +373,7 @@ export const getPlatformOverview = async (req, res) => {
         $group: {
           _id: { companyId: "$companyId", status: "$status" },
           count: { $sum: 1 },
-          value: { $sum: "$grandTotal" },
+          value: { $sum: { $multiply: ["$grandTotal", { $ifNull: ["$exchangeRate", 1] }] } },
         },
       },
     ]),

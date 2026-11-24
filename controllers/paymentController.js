@@ -326,7 +326,8 @@ export const getCollectionSummary = async (req, res) => {
 
   const [payments, paidInvoices, paymentInvoiceIds] = await Promise.all([
     Payment.find({ companyId, voided: false })
-      .select("amount paidOn createdAt")
+      .populate("invoiceId", "exchangeRate")
+      .select("amount paidOn createdAt invoiceId")
       .lean(),
     Invoice.find({ companyId, status: "paid" }).lean(),
     Payment.distinct("invoiceId", { companyId }),
@@ -338,6 +339,19 @@ export const getCollectionSummary = async (req, res) => {
   const legacyInvoices = paidInvoices.filter(
     (invoice) => !invoicesWithPayments.has(String(invoice._id))
   );
+
+  // Convert foreign-currency amounts to the company's base currency.
+  for (const payment of payments) {
+    const rate = Number(payment?.invoiceId?.exchangeRate || 1);
+    if (rate && rate !== 1) payment.amount = Number(payment.amount || 0) * rate;
+  }
+  for (const invoice of legacyInvoices) {
+    const rate = Number(invoice?.exchangeRate || 1);
+    if (rate && rate !== 1) {
+      invoice.grandTotal = Number(invoice.grandTotal || 0) * rate;
+      invoice.amountPaid = Number(invoice.amountPaid || 0) * rate;
+    }
+  }
 
   const summary = summarizeCollections({ payments, legacyInvoices, now });
 

@@ -33,6 +33,8 @@ const INVOICE_UPDATE_FIELDS = [
   "notes",
   "status",
   "customFields",
+  "currency",
+  "exchangeRate",
 ];
 const INVOICE_STATUSES = new Set([
   "draft",
@@ -356,7 +358,7 @@ export const getInvoice = async (req, res) => {
 
 export const createInvoice = async (req, res) => {
   try {
-    const { client, lineItems, taxPercent, date, dueDate, notes, customFields } = req.body || {};
+    const { client, lineItems, taxPercent, date, dueDate, notes, customFields, currency, exchangeRate } = req.body || {};
     const companyId = tenantId(req);
 
     if (!companyId) {
@@ -437,6 +439,17 @@ export const createInvoice = async (req, res) => {
       return res.status(400).json({ message: "Due date must be after invoice date" });
     }
 
+    if (currency !== undefined) {
+      if (typeof currency !== "string" || !/^[A-Za-z]{3}$/.test(String(currency).trim())) {
+        return res.status(400).json({ message: "Currency must be a 3-letter code (e.g. INR)" });
+      }
+    }
+    const parsedExchangeRate =
+      exchangeRate === undefined ? 1 : Number(exchangeRate);
+    if (!Number.isFinite(parsedExchangeRate) || parsedExchangeRate <= 0) {
+      return res.status(400).json({ message: "Exchange rate must be a number greater than or equal to 0" });
+    }
+
     const placeOfSupply = resolvePlaceOfSupply({
       company: activeCompany,
       client: clientDoc,
@@ -461,6 +474,8 @@ export const createInvoice = async (req, res) => {
       taxPercent: tax,
       taxAmount: taxTotal,
       grandTotal,
+      currency: currency ? String(currency).trim().toUpperCase() : (activeCompany?.currency || "INR"),
+      exchangeRate: parsedExchangeRate,
       taxType,
       cgstAmount,
       sgstAmount,
@@ -508,6 +523,20 @@ export const updateInvoice = async (req, res) => {
     const updates = {};
     for (const key of INVOICE_UPDATE_FIELDS) {
       if (body[key] !== undefined) updates[key] = body[key];
+    }
+
+    if (updates.currency !== undefined) {
+      if (typeof updates.currency !== "string" || !/^[A-Za-z]{3}$/.test(updates.currency.trim())) {
+        return res.status(400).json({ message: "Currency must be a 3-letter code (e.g. INR)" });
+      }
+      updates.currency = updates.currency.trim().toUpperCase();
+    }
+    if (updates.exchangeRate !== undefined) {
+      const rate = Number(updates.exchangeRate);
+      if (!Number.isFinite(rate) || rate <= 0) {
+        return res.status(400).json({ message: "Exchange rate must be a number greater than or equal to 0" });
+      }
+      updates.exchangeRate = rate;
     }
 
     const effectiveClientId = updates.client !== undefined ? updates.client : invoice.client;

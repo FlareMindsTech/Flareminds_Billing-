@@ -13,6 +13,8 @@ export const TEMPLATE_PRESETS = [
   "premium-invoice",
   "service-invoice",
   "minimal-quotation",
+  "it-services",
+  "medical-coding",
 ];
 export const SECTION_KEYS = [
   "header",

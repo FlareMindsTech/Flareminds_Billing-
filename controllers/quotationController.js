@@ -42,6 +42,7 @@ const QUOTATION_WRITABLE_FIELDS = [
   "lineItems",
   "shippingCharges",
   "currency",
+  "exchangeRate",
   "notes",
   "termsAndConditions",
   "deliveryTimeline",
@@ -294,6 +295,14 @@ async function parseWritableBody(body, req, { forUpdate = false } = {}) {
       return { error: { status: 400, message: "Currency must be a 3-letter code (e.g. INR)" } };
     }
     values.currency = values.currency.trim().toUpperCase();
+  }
+
+  if (values.exchangeRate !== undefined) {
+    const rate = parseNumber(values.exchangeRate);
+    if (rate === null || rate <= 0) {
+      return { error: { status: 400, message: "Exchange rate must be a number greater than or equal to 0" } };
+    }
+    values.exchangeRate = rate;
   }
 
   for (const key of ["notes", "termsAndConditions", "deliveryTimeline", "paymentTerms", "warrantyTerms", "exclusions"]) {
@@ -567,6 +576,7 @@ export const createQuotation = async (req, res) => {
           shippingCharges: totalsOf.shippingCharges,
           grandTotal: totalsOf.grandTotal,
           currency: values.currency ?? "INR",
+          exchangeRate: values.exchangeRate ?? 1,
           notes: values.notes ?? "",
           termsAndConditions: values.termsAndConditions ?? "",
           deliveryTimeline: values.deliveryTimeline ?? "",
@@ -712,6 +722,7 @@ export const updateQuotation = async (req, res) => {
     quotation.grandTotal = totals.grandTotal;
 
     if (values.currency !== undefined) quotation.currency = values.currency;
+    if (values.exchangeRate !== undefined) quotation.exchangeRate = values.exchangeRate;
     quotation.customFields = effectiveCustomFields;
 
     for (const key of ["notes", "termsAndConditions", "deliveryTimeline", "paymentTerms", "warrantyTerms", "exclusions"]) {
@@ -1279,6 +1290,8 @@ export const convertQuotationToInvoice = async (req, res) => {
       taxPercent: Number((quotation.lineItems || [])[0]?.taxPercent ?? 0),
       taxAmount: taxTotal,
       grandTotal,
+      currency: quotation.currency || "INR",
+      exchangeRate: quotation.exchangeRate || 1,
       taxType,
       cgstAmount,
       sgstAmount,

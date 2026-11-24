@@ -14,7 +14,7 @@ const CURRENCY_SYMBOLS = {
   USD: "$",
   EUR: "€",
   GBP: "£",
-  AED: "د.إ",
+  AED: "AED",
   AUD: "A$",
   SGD: "S$",
   CAD: "C$",
@@ -163,8 +163,23 @@ const yesNo = (value) => {
 };
 
 export function amountInWords(number, currency = "INR") {
+  const MAJOR = {
+    INR: "Rupees",
+    USD: "US Dollars",
+    EUR: "Euros",
+    GBP: "British Pounds",
+    AED: "UAE Dirhams",
+  };
+  const MINOR = {
+    INR: "Paise",
+    USD: "Cents",
+    EUR: "Cents",
+    GBP: "Pence",
+    AED: "Fils",
+  };
+
   const num = Math.abs(Number(number) || 0);
-  if (num === 0) return "Rupees Zero Only";
+  if (num === 0) return `${MAJOR[currency] || currency} Zero Only`;
 
   const ones = [
     "", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine",
@@ -215,12 +230,15 @@ export function amountInWords(number, currency = "INR") {
   if (thousands > 0) parts.push(convertThreeDigits(thousands) + " Thousand");
   if (hundreds > 0) parts.push(convertThreeDigits(hundreds));
 
+  const major = MAJOR[currency] || currency;
+  const minor = MINOR[currency] || "Cents";
+
   let words = parts.join(" ").trim();
-  const prefix = currency === "INR" ? "Rupees " : "";
+  const prefix = `${major} `;
   let result = prefix + (words || "Zero");
 
   if (decimalPart > 0) {
-    result += " and Paise " + convertTwoDigits(decimalPart);
+    result += " and " + minor + " " + convertTwoDigits(decimalPart);
   }
 
   return result + " Only";

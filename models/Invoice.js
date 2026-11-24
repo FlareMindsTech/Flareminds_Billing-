@@ -53,6 +53,11 @@ const invoiceSchema = new mongoose.Schema(
     taxAmount: { type: Number, default: 0 },
     grandTotal: { type: Number, required: true },
 
+    // Multi-currency support: document currency (defaults to company currency)
+    // and the exchange rate to the company's base currency (defaults to 1).
+    currency: { type: String, default: "INR", maxlength: 8 },
+    exchangeRate: { type: Number, default: 1, min: 0 },
+
     // Payment-derived fields. Both are recomputed from non-voided Payment
     // records whenever money is recorded or voided; clients never set them.
     amountPaid: { type: Number, default: 0 },

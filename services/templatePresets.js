@@ -65,10 +65,15 @@ export function defaultLabels(docType, preset = "classic") {
   let quotationTitle = "QUOTATION";
   if (preset === "commercial-proposal") quotationTitle = "COMMERCIAL PROPOSAL";
   if (preset === "minimal-quotation") quotationTitle = "QUOTATION";
+  if (preset === "medical-coding")
+    quotationTitle = docType === "invoice" ? "FEE RECEIPT" : "COURSE PROPOSAL";
   return {
     ...BASE_LABELS,
     quotationTitle: docType === "invoice" ? "INVOICE" : quotationTitle,
-    invoiceTitle: "TAX INVOICE",
+    invoiceTitle:
+      preset === "medical-coding" && docType === "invoice"
+        ? "FEE RECEIPT"
+        : "TAX INVOICE",
     clientSectionTitle: "BILL TO",
   };
 }
@@ -85,6 +90,8 @@ export const PRESET_DOC_TYPES = {
   "premium-invoice": ["invoice"],
   "service-invoice": ["invoice"],
   "minimal-quotation": ["quotation"],
+  "it-services": ["quotation", "invoice"],
+  "medical-coding": ["quotation", "invoice"],
 };
 
 export function presetsForDocType(docType) {
@@ -170,6 +177,24 @@ export function defaultLayout(overrides = {}) {
       fontFamily: "Arial",
       fontScale: 1,
       tableStyle: "minimal",
+      margins: { top: 14, right: 14, bottom: 14, left: 14 },
+    };
+  } else if (preset === "it-services") {
+    presetStyle = {
+      accentColor: "#2563eb",
+      secondaryColor: "#0f172a",
+      fontFamily: "Helvetica",
+      fontScale: 1,
+      tableStyle: "striped",
+      margins: { top: 14, right: 14, bottom: 14, left: 14 },
+    };
+  } else if (preset === "medical-coding") {
+    presetStyle = {
+      accentColor: "#0d9488",
+      secondaryColor: "#1e293b",
+      fontFamily: "Helvetica",
+      fontScale: 1,
+      tableStyle: "bordered",
       margins: { top: 14, right: 14, bottom: 14, left: 14 },
     };
   }
@@ -289,11 +314,11 @@ export function defaultContent(docType, preset = "classic") {
   const isProposal =
     isPreset(preset, ["proposal", "commercial-proposal"]) && docType !== "invoice";
   const isGst = isPreset(preset, ["tax-invoice", "gst-invoice"]);
+  const isIt = preset === "it-services";
 
   const base = {
     subject: "",
-    servicesBanner:
-      "Supply, Installation & Commissioning of Grid-Connected Solar Power Systems",
+    servicesBanner: "",
     signatoryName: "",
     signatoryTitle: "Authorised Signatory",
     closingText: "",
@@ -303,13 +328,19 @@ export function defaultContent(docType, preset = "classic") {
     scopeOfWork: [],
     processSteps: [],
     paymentMilestones: [],
-    showGstBreakup: isGst,
+    showGstBreakup: isGst || isIt,
     showAmountInWords: true,
     showBankDetails: true,
-    showServicesBanner: isGst || isProposal,
+    showServicesBanner: false,
     showSignature: true,
     showPaymentSummary: true,
   };
+
+  if (preset === "commercial-proposal" || preset === "proposal") {
+    base.servicesBanner =
+      "Supply, Installation & Commissioning of Grid-Connected Solar Power Systems";
+    base.showServicesBanner = true;
+  }
 
   if (isProposal) {
     base.subject = "";
@@ -336,6 +367,94 @@ export function buildDefaultTemplateConfig(
 ) {
   const type = docType === "invoice" ? "invoice" : "quotation";
   const isGst = isPreset(preset, ["tax-invoice", "gst-invoice"]);
+  const isIt = preset === "it-services";
+
+  // Preset-specific default document fields (optional, shown only when present).
+  let resolvedCustomFields = Array.isArray(customFields) ? customFields : [];
+  let resolvedItemCustomFields = Array.isArray(itemCustomFields)
+    ? itemCustomFields
+    : [];
+
+  if (preset === "it-services") {
+    if (resolvedCustomFields.length === 0) {
+      resolvedCustomFields = [
+        {
+          key: "projectName",
+          label: "Project Name",
+          type: "text",
+          required: false,
+          placeholder: "e.g. Website Revamp",
+          showOnPdf: true,
+          order: 0,
+        },
+        {
+          key: "poNumber",
+          label: "PO Number",
+          type: "text",
+          required: false,
+          placeholder: "e.g. PO-2026-0042",
+          showOnPdf: true,
+          order: 1,
+        },
+        {
+          key: "paymentTerms",
+          label: "Payment Terms",
+          type: "select",
+          options: ["Due on Receipt", "Net 15", "Net 30", "Net 45", "Net 60"],
+          defaultValue: "Net 30",
+          required: false,
+          showOnPdf: true,
+          order: 2,
+        },
+      ];
+    }
+    if (resolvedItemCustomFields.length === 0) {
+      resolvedItemCustomFields = [
+        {
+          key: "sacCode",
+          label: "SAC Code",
+          type: "text",
+          required: false,
+          placeholder: "e.g. 998314",
+          showOnPdf: true,
+          order: 0,
+        },
+      ];
+    }
+  } else if (preset === "medical-coding") {
+    if (resolvedCustomFields.length === 0) {
+      resolvedCustomFields = [
+        {
+          key: "studentId",
+          label: "Student ID",
+          type: "text",
+          required: false,
+          placeholder: "e.g. STU-1001",
+          showOnPdf: true,
+          order: 0,
+        },
+        {
+          key: "courseName",
+          label: "Course Name",
+          type: "text",
+          required: false,
+          placeholder: "e.g. Medical Coding Professional",
+          showOnPdf: true,
+          order: 1,
+        },
+        {
+          key: "batchDuration",
+          label: "Batch / Duration",
+          type: "text",
+          required: false,
+          placeholder: "e.g. Batch A - 6 Months",
+          showOnPdf: true,
+          order: 2,
+        },
+      ];
+    }
+  }
+
   return {
     docType: type,
     name: name || (type === "invoice" ? "Standard Invoice" : "Standard Quotation"),
@@ -349,13 +468,13 @@ export function buildDefaultTemplateConfig(
     columns: {
       category: true,
       itemType: type === "quotation",
-      unit: type === "quotation" || isGst,
+      unit: type === "quotation" || isGst || isIt,
       discount: type === "quotation",
-      tax: type === "quotation" || isGst,
-      customFields: [],
+      tax: type === "quotation" || isGst || isIt,
+      customFields: isIt ? ["sacCode"] : [],
     },
-    customFields: Array.isArray(customFields) ? customFields : [],
-    itemCustomFields: Array.isArray(itemCustomFields) ? itemCustomFields : [],
+    customFields: resolvedCustomFields,
+    itemCustomFields: resolvedItemCustomFields,
     labels: defaultLabels(type, preset),
     content: { ...defaultContent(type, preset), ...(content || {}) },
   };
@@ -434,5 +553,19 @@ export const PRESET_META = [
     description:
       "Light, typography-led quotation with generous whitespace and a crisp totals panel.",
     docTypes: ["quotation"],
+  },
+  {
+    key: "it-services",
+    name: "IT & Software Services",
+    description:
+      "Clean corporate layout for IT agencies and SaaS: SAC codes, service deliverables, Qty/Units, Rate, GST breakup, PO/Project/Payment Terms, bank & signatory.",
+    docTypes: ["quotation", "invoice"],
+  },
+  {
+    key: "medical-coding",
+    name: "Medical Coding Institute",
+    description:
+      "Institutional fee receipt and course proposal layout with Student ID, Course, Batch/Duration and payment summary (Total Fee / Paid / Balance Due).",
+    docTypes: ["quotation", "invoice"],
   },
 ];
